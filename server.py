@@ -28,7 +28,7 @@ if not os.path.exists(DATA_DIR):
 stream_params = "/".join([f"{s}@aggTrade" for s in SYMBOLS])
 SOCKET = f"wss://fstream.binance.com/stream?streams={stream_params}"
 
-MAX_HISTORY = 5000  
+MAX_HISTORY = 50000  
 
 class CandleManager:
     def __init__(self, symbol, interval):
@@ -121,6 +121,8 @@ class CandleManager:
             rsi_result.append(rsi)
         return rsi_result
 
+    # --- UPDATE METHOD YANG DIOPTIMASI ---
+    # Ganti method update() yang lama dengan ini agar lebih ringan untuk data besar
     def update(self, price, qty, tick_second):
         if self.candle is None:
             self._new_candle(tick_second, price, qty)
@@ -131,13 +133,28 @@ class CandleManager:
                 self._close_candle()
                 self._new_candle(tick_second, price, qty)
         else:
+            # Update Live Candle
             self.candle['high'] = max(self.candle['high'], price)
             self.candle['low'] = min(self.candle['low'], price)
             self.candle['close'] = price
             self.candle['volume'] += qty
             
-            temp_closes = list(self.history_closes)[-500:] + [price]
-            live_rsis = self._calculate_rsi_wilder_full(temp_closes)
+            # OPTIMASI: Jangan copy seluruh 50.000 data history hanya untuk hitung RSI live
+            # Kita ambil irisan (slicing) 500 data terakhir saja dari deque secara efisien
+            # Menggunakan list() pada deque besar itu O(N), jadi kita batasi scope-nya
+            
+            # Trik: Ambil 500 terakhir. Jika history masih dikit, ambil semua.
+            history_len = len(self.history_closes)
+            start_index = max(0, history_len - 500)
+            
+            # Kita iterate manual sedikit lebih cepat daripada full copy
+            recent_closes = []
+            for i in range(start_index, history_len):
+                recent_closes.append(self.history_closes[i])
+            
+            recent_closes.append(price)
+            
+            live_rsis = self._calculate_rsi_wilder_full(recent_closes)
             if live_rsis: self.candle['rsi'] = live_rsis[-1]
             
             socketio.emit(f'update_{self.interval}s', self.candle)
