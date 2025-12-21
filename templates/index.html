@@ -2,19 +2,14 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Binance Multi-TF</title>
+    <title>Binance Memory Chart</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
     <style>
         body { background: #000; color: #ccc; font-family: sans-serif; padding: 20px; }
-        
-        /* Layout Header & Tombol */
         .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        .tf-selector button {
-            background: #333; color: #fff; border: 1px solid #555; padding: 5px 15px; cursor: pointer;
-        }
+        .tf-selector button { background: #333; color: #fff; border: 1px solid #555; padding: 5px 15px; cursor: pointer; }
         .tf-selector button.active { background: #26a69a; border-color: #26a69a; font-weight: bold; }
-        
         #chart-container { height: 500px; border: 1px solid #333; }
         #rsi-container { height: 150px; border: 1px solid #333; border-top: none; }
         .price-info { font-family: monospace; font-size: 16px; }
@@ -60,53 +55,75 @@
         rsiSeries.createPriceLine({ price: 70, color: '#ef5350', lineStyle: 2, axisLabelVisible: false });
         rsiSeries.createPriceLine({ price: 30, color: '#26a69a', lineStyle: 2, axisLabelVisible: false });
 
-        // --- FIX ERROR SCROLL SYNC (SOLUSI BARU) ---
         chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
             rsiChart.timeScale().setVisibleLogicalRange(range);
         });
 
-        // --- LOGIKA SWITCHING ---
+        // --- LOGIKA UTAMA ---
         let currentTF = 1;
         const socket = io();
 
+        // 1. Fungsi Ganti Timeframe
         function switchTF(tf) {
             currentTF = tf;
             
-            // Update UI Tombol
+            // Update Tombol UI
             document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
             document.getElementById(`btn-${tf}`).classList.add('active');
             document.getElementById('tf-label').innerText = `[${tf}s]`;
             
-            // Bersihkan Data Lama agar tidak tumpang tindih
+            // BERSIHKAN CHART
             candleSeries.setData([]);
             rsiSeries.setData([]);
+            
+            // MINTA DATA MASA LALU KE SERVER (The Magic Step)
+            console.log(`Meminta history untuk TF ${tf}s...`);
+            socket.emit('request_history', {tf: tf});
         }
 
-        function processData(tf, type, data) {
-            // HANYA proses data jika TF yang dikirim SAMA DENGAN yang sedang dipilih user
-            if (tf !== currentTF) return;
+        // 2. Menerima Data History dari Server
+        socket.on('history_response', (msg) => {
+            if (msg.tf !== currentTF) return; // Cegah balapan data
 
-            // Format Data
-            const candle = { time: data.start_time, open: data.open, high: data.high, low: data.low, close: data.close };
-            const rsi = { time: data.start_time, value: data.rsi };
+            const historyCandles = [];
+            const historyRSI = [];
 
-            // Update Chart
-            candleSeries.update(candle);
-            if(data.rsi) rsiSeries.update(rsi);
+            msg.data.forEach(d => {
+                historyCandles.push({ time: d.start_time, open: d.open, high: d.high, low: d.low, close: d.close });
+                if (d.rsi) historyRSI.push({ time: d.start_time, value: d.rsi });
+            });
 
-            // Update Teks Header
-            document.getElementById('price').innerText = data.close.toFixed(2);
-            const rsiEl = document.getElementById('rsi');
-            rsiEl.innerText = data.rsi ? data.rsi.toFixed(2) : '---';
-            rsiEl.style.color = data.rsi >= 70 ? '#ef5350' : (data.rsi <= 30 ? '#26a69a' : '#f39c12');
-        }
-
-        // --- LISTENER SOCKET MULTI-CHANNEL ---
-        // Kita mendengarkan semua saluran, tapi memfilter di fungsi processData
-        [1, 5, 15, 30].forEach(tf => {
-            socket.on(`update_${tf}s`, (msg) => processData(tf, 'update', msg));
-            socket.on(`close_${tf}s`, (msg) => processData(tf, 'close', msg));
+            // Isi Chart Sekaligus
+            candleSeries.setData(historyCandles);
+            rsiSeries.setData(historyRSI);
+            console.log(`History loaded: ${msg.data.length} candles`);
         });
+
+        // 3. Menerima Data Live (Real-time)
+        function processData(tf, data) {
+            if (tf !== currentTF) return;
+            
+            candleSeries.update({ time: data.start_time, open: data.open, high: data.high, low: data.low, close: data.close });
+            
+            if(data.rsi) {
+                rsiSeries.update({ time: data.start_time, value: data.rsi });
+                
+                // Update Text RSI
+                const rsiEl = document.getElementById('rsi');
+                rsiEl.innerText = data.rsi.toFixed(2);
+                rsiEl.style.color = data.rsi >= 70 ? '#ef5350' : (data.rsi <= 30 ? '#26a69a' : '#f39c12');
+            }
+            
+            document.getElementById('price').innerText = data.close.toFixed(2);
+        }
+
+        [1, 5, 15, 30].forEach(tf => {
+            socket.on(`update_${tf}s`, (msg) => processData(tf, msg));
+            socket.on(`close_${tf}s`, (msg) => processData(tf, msg));
+        });
+        
+        // Panggil 1x saat pertama load agar tidak kosong
+        switchTF(1);
 
     </script>
 </body>

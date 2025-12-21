@@ -2,7 +2,7 @@ import threading
 import json
 import websocket
 from flask import Flask, render_template
-from flask_socketio import SocketIO
+from flask_socketio import SocketIO, emit
 
 # --- KONFIGURASI ---
 app = Flask(__name__)
@@ -12,42 +12,39 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 SYMBOL = "btcusdt"
 SOCKET = f"wss://fstream.binance.com/ws/{SYMBOL}@aggTrade"
 
-# --- CLASS PENGELOLA CANDLE ---
+# --- CLASS PENGELOLA CANDLE & MEMORI ---
 class CandleManager:
     def __init__(self, interval):
-        self.interval = interval  # Contoh: 1, 5, 15, 30
+        self.interval = interval
         self.candle = None
-        self.history_closes = []  # Untuk hitung RSI
+        self.history_closes = []  # Untuk hitung rumus RSI
+        self.history_candles = [] # MEMORI: Menyimpan candle utuh untuk dikirim ke browser
         self.last_finalized_time = 0
 
     def update(self, price, qty, tick_second):
-        # 1. Inisialisasi Candle Baru jika kosong
+        # 1. Inisialisasi Candle Baru
         if self.candle is None:
             self._new_candle(tick_second, price, qty)
             return
 
-        # 2. Cek apakah sudah waktunya ganti candle (Closing)
-        # Logika: Jika detik sekarang > start time DAN detik sekarang adalah kelipatan interval
-        # Contoh 5s: Mulai 10:00:00. Sekarang 10:00:05 (Kelipatan 5) -> Close.
+        # 2. Cek Closing Candle
         if tick_second > self.candle['start_time'] and tick_second % self.interval == 0:
             if tick_second > self.last_finalized_time:
                 self._close_candle()
                 self._new_candle(tick_second, price, qty)
         else:
-            # 3. Masih di candle yang sama -> Update High/Low/Close
+            # 3. Update Candle Berjalan
             self.candle['high'] = max(self.candle['high'], price)
             self.candle['low'] = min(self.candle['low'], price)
             self.candle['close'] = price
             self.candle['volume'] += qty
-            self.candle['rsi'] = self._calculate_rsi(price) # Hitung RSI sementara
+            self.candle['rsi'] = self._calculate_rsi(price)
             
-            # Kirim update "Ticking" (Candle goyang)
+            # Kirim update "Ticking" (hanya ke user yang sedang lihat TF ini)
             socketio.emit(f'update_{self.interval}s', self.candle)
 
     def _new_candle(self, start_time, price, qty):
-        # Pastikan start_time sesuai grid interval (misal 13 detik jadi 10 detik untuk TF 5s)
         aligned_time = start_time - (start_time % self.interval)
-        
         rsi = self._calculate_rsi(price)
         self.candle = {
             "start_time": aligned_time,
@@ -56,18 +53,24 @@ class CandleManager:
         }
 
     def _close_candle(self):
-        # Simpan close price untuk RSI history
+        # A. Update History Harga untuk Rumus RSI
         self.history_closes.append(self.candle['close'])
         if len(self.history_closes) > 1000: self.history_closes.pop(0)
         
+        # B. SIMPAN KE MEMORI (Agar saat switch TF, grafik langsung penuh)
+        # Kita copy dictionary agar tidak tertimpa referensinya
+        final_candle = self.candle.copy()
+        self.history_candles.append(final_candle)
+        
+        # Batasi memori server (misal simpan 500 candle terakhir per timeframe)
+        if len(self.history_candles) > 500: self.history_candles.pop(0)
+        
         # Kirim sinyal candle FINAL
-        socketio.emit(f'close_{self.interval}s', self.candle)
+        socketio.emit(f'close_{self.interval}s', final_candle)
         self.last_finalized_time = self.candle['start_time'] + self.interval
 
     def _calculate_rsi(self, current_price, period=14):
-        # Gabungkan history + harga sekarang untuk hitung RSI live
         temp_prices = self.history_closes + [current_price]
-        
         if len(temp_prices) < period + 1: return 50
         
         gains, losses = [], []
@@ -85,13 +88,23 @@ class CandleManager:
         rs = avg_gain / avg_loss
         return 100 - (100 / (1 + rs))
 
-# --- INISIALISASI MANAGERS ---
+# --- INISIALISASI ---
 managers = {
     1: CandleManager(1),
     5: CandleManager(5),
     15: CandleManager(15),
     30: CandleManager(30)
 }
+
+# --- EVENT HANDLER KHUSUS REQUEST HISTORY ---
+@socketio.on('request_history')
+def handle_history_request(data):
+    # Saat browser minta data lama, kita ambil dari memori RAM Python
+    tf = int(data['tf'])
+    if tf in managers:
+        history = managers[tf].history_candles
+        # Kirim balik ke pengirim saja (emit)
+        emit('history_response', {'tf': tf, 'data': history})
 
 # --- WEBSOCKET BINANCE ---
 def on_message(ws, message):
@@ -100,7 +113,6 @@ def on_message(ws, message):
     qty = float(data['q'])
     tick_second = int(data['T'] / 1000)
 
-    # Update SEMUA Timeframe sekaligus
     for interval in managers:
         managers[interval].update(price, qty, tick_second)
 
@@ -115,5 +127,5 @@ if __name__ == '__main__':
     t = threading.Thread(target=run_stream)
     t.daemon = True
     t.start()
-    print("=== Server Multi-TF Ready di http://127.0.0.1:5000 ===")
+    print("=== Server dengan Memory Ready di http://127.0.0.1:5000 ===")
     socketio.run(app, debug=True, use_reloader=False)
