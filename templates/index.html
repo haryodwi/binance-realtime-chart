@@ -2,41 +2,69 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Binance Pro Chart + Volume</title>
+    <title>Binance Pro Chart + Alarms</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
     <style>
-        body { background: #0b0e11; color: #eaecef; font-family: sans-serif; margin: 0; padding: 20px; user-select: none; }
+        body { background: #0b0e11; color: #eaecef; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; user-select: none; }
         
-        /* Header */
+        /* HEADER & CONTROLS */
         .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; background: #1e2329; padding: 10px; border-radius: 6px; }
-        select { background: #2b3139; color: #fcd535; border: 1px solid #474d57; padding: 5px 10px; border-radius: 4px; font-weight: bold; cursor: pointer; outline: none; }
-        .tf-selector button { background: #2b3139; color: #eaecef; border: none; padding: 6px 15px; cursor: pointer; border-radius: 4px; font-weight: bold; margin-left: 5px; }
-        .tf-selector button.active { background: #fcd535; color: #1e2329; }
         
-        /* Tombol Measure */
-        #btn-measure { background: #474d57; color: #fff; border: 1px solid #848e9c; padding: 6px 15px; cursor: pointer; border-radius: 4px; margin-right: 15px; font-weight: bold;}
-        #btn-measure.active { background: #2962ff; border-color: #2962ff; color: white; box-shadow: 0 0 10px rgba(41, 98, 255, 0.5); }
+        select, input { background: #2b3139; color: #fcd535; border: 1px solid #474d57; padding: 5px 10px; border-radius: 4px; font-weight: bold; outline: none; }
+        select { cursor: pointer; }
+        
+        .btn { background: #2b3139; color: #eaecef; border: 1px solid #474d57; padding: 6px 15px; cursor: pointer; border-radius: 4px; font-weight: bold; margin-left: 5px; transition: 0.2s; }
+        .btn:hover { background: #474d57; }
+        .btn.active { background: #fcd535; color: #1e2329; border-color: #fcd535; }
+        .btn-danger { color: #f6465d; border-color: #f6465d; }
+        .btn-danger:hover { background: #f6465d; color: white; }
 
+        .info { font-family: 'Roboto Mono', monospace; font-size: 14px; display: flex; align-items: center; gap: 15px; }
+        .val { font-weight: bold; }
+
+        /* CHART LAYOUT */
         #main-container { display: flex; flex-direction: column; height: 80vh; position: relative; }
         #chart-div { flex: 3; border: 1px solid #2b3139; border-bottom: none; cursor: crosshair; }
         #rsi-div { flex: 1; border: 1px solid #2b3139; }
-        
-        .info { font-family: monospace; font-size: 14px; display: flex; align-items: center; gap: 15px; }
-        .val { font-weight: bold; }
 
-        /* Tooltip Measure */
-        #measure-tooltip {
-            display: none; position: absolute; z-index: 100; padding: 10px; border-radius: 6px;
-            font-family: 'Roboto Mono', monospace; font-size: 12px; color: white;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3); pointer-events: none;
-            border: 1px solid rgba(255,255,255,0.2); white-space: pre-line;
+        /* ALARM PANEL */
+        #alarm-panel {
+            display: none; background: #1e2329; border: 1px solid #474d57; padding: 15px; 
+            border-radius: 6px; margin-bottom: 10px;
         }
-        .measure-up { background: rgba(14, 203, 129, 0.9); border-color: #0ecb81 !important; }
-        .measure-down { background: rgba(246, 70, 93, 0.9); border-color: #f6465d !important; }
+        .alarm-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+        .alarm-list { max-height: 150px; overflow-y: auto; margin-top: 10px; border-top: 1px solid #2b3139; }
+        .alarm-item { 
+            display: flex; justify-content: space-between; align-items: center; 
+            padding: 8px; border-bottom: 1px solid #2b3139; font-size: 13px; 
+        }
+        .alarm-item:hover { background: #2b3139; }
+
+        /* TOAST NOTIFICATION POPUP */
+        #toast-container { position: fixed; top: 20px; right: 20px; z-index: 9999; }
+        .toast {
+            background: #2b3139; color: #fff; padding: 15px 20px; margin-bottom: 10px;
+            border-left: 5px solid #fcd535; border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            animation: slideIn 0.3s ease-out; display: flex; align-items: center; justify-content: space-between; min-width: 250px;
+        }
+        .toast.alert-high { border-left-color: #f6465d; } /* Merah */
+        .toast.alert-low { border-left-color: #0ecb81; } /* Hijau */
+        
+        @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+
+        /* TOOLTIP MEASURE */
+        #measure-tooltip {
+            display: none; position: absolute; z-index: 100; padding: 8px; border-radius: 4px;
+            font-family: monospace; font-size: 12px; color: white; background: rgba(0,0,0,0.8);
+            pointer-events: none; border: 1px solid #474d57; white-space: pre-line;
+        }
     </style>
 </head>
 <body>
+
+    <audio id="snd-beep" src="data:audio/wav;base64,UklGRl9vT1BXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YU..."></audio> <audio id="snd-bell" src="data:audio/wav;base64,UklGRl9vT1BXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YU..."></audio> <div id="toast-container"></div>
 
     <div class="top-bar">
         <div class="info">
@@ -44,17 +72,34 @@
                 <option value="BTCUSDT">BTCUSDT</option>
                 <option value="1000PEPEUSDT">1000PEPEUSDT</option>
             </select>
-            <button id="btn-measure" onclick="toggleMeasure()">📐 Measure</button>
+            
+            <button class="btn" id="btn-measure" onclick="toggleMeasure()">📐 Measure</button>
+            <button class="btn" id="btn-alarm-toggle" onclick="toggleAlarmPanel()">🔔 Alarms</button>
+
             <span>TF: <span id="tf-label" style="color:#fcd535">[1s]</span></span>
             <span>Price: <span id="price" class="val">---</span></span>
             <span>RSI: <span id="rsi" class="val">---</span></span>
         </div>
         <div class="tf-selector">
-            <button onclick="changeTF(1)" id="btn-1" class="active">1s</button>
-            <button onclick="changeTF(5)" id="btn-5">5s</button>
-            <button onclick="changeTF(15)" id="btn-15">15s</button>
-            <button onclick="changeTF(30)" id="btn-30">30s</button>
+            <button onclick="changeTF(1)" id="btn-1" class="active btn">1s</button>
+            <button onclick="changeTF(5)" id="btn-5" class="btn">5s</button>
+            <button onclick="changeTF(15)" id="btn-15" class="btn">15s</button>
+            <button onclick="changeTF(30)" id="btn-30" class="btn">30s</button>
         </div>
+    </div>
+
+    <div id="alarm-panel">
+        <div style="margin-bottom:10px; font-weight:bold; color:#fcd535;">Add New Alarm</div>
+        <div class="alarm-row">
+            <select id="alarm-symbol"><option value="BTCUSDT">BTCUSDT</option><option value="1000PEPEUSDT">1000PEPEUSDT</option></select>
+            <select id="alarm-tf"><option value="1">1s</option><option value="5">5s</option><option value="15">15s</option><option value="30">30s</option></select>
+            <select id="alarm-cond"><option value=">">RSI ></option><option value="<">RSI <</option></select>
+            <input type="number" id="alarm-val" placeholder="Value (e.g 70)" style="width: 80px;">
+            <select id="alarm-sound"><option value="beep">Beep</option><option value="bell">Bell</option></select>
+            <button class="btn" onclick="addAlarm()">+ Add</button>
+        </div>
+        <div class="alarm-list" id="alarm-list-container">
+            </div>
     </div>
 
     <div id="main-container">
@@ -64,12 +109,42 @@
     </div>
 
     <script>
+        // --- 0. PREPARE SOUNDS (Simple Beep & Bell via JS Oscillator for reliability) ---
+        // Kita gunakan Web Audio API agar tidak perlu file eksternal
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(type) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            if (type === 'beep') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(300, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.1);
+            } else if (type === 'bell') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(600, audioCtx.currentTime); // Ding
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 1.5);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 1.5);
+            }
+        }
+
+        // --- 1. CONFIG ---
         const symbolSettings = {
             "BTCUSDT": { precision: 2, minMove: 0.01 },
             "1000PEPEUSDT": { precision: 7, minMove: 0.0000001 }
         };
 
-        // --- SETUP CHART UTAMA ---
+        // --- 2. CHART SETUP ---
         const chartProps = {
             layout: { backgroundColor: '#161a1e', textColor: '#848e9c' },
             grid: { vertLines: { color: '#2b3139' }, horzLines: { color: '#2b3139' } },
@@ -79,45 +154,137 @@
         };
 
         const chart = LightweightCharts.createChart(document.getElementById('chart-div'), chartProps);
-
-        // 1. Series Volume (Histogram) - Ditambahkan DULUAN agar posisinya "di belakang" candle
         const volumeSeries = chart.addHistogramSeries({
-            color: '#26a69a',
-            priceFormat: { type: 'volume' },
-            priceScaleId: '', // Overlay mode (berbagi sumbu dengan chart utama tapi diatur marginnya)
-            scaleMargins: {
-                top: 0.8, // Volume akan ditekan ke bawah (mulai dari 80% ke bawah layar)
-                bottom: 0,
-            },
+            color: '#26a69a', priceFormat: { type: 'volume' }, priceScaleId: '', 
+            scaleMargins: { top: 0.8, bottom: 0 },
         });
-
-        // 2. Series Candle
         const candleSeries = chart.addCandlestickSeries({
             upColor: '#0ecb81', downColor: '#f6465d', borderVisible: false, wickUpColor: '#0ecb81', wickDownColor: '#f6465d'
         });
 
-        // --- SETUP RSI ---
         const rsiChart = LightweightCharts.createChart(document.getElementById('rsi-div'), {
-            ...chartProps, 
-            timeScale: { visible: true, timeVisible: true, secondsVisible: true }
+            ...chartProps, timeScale: { visible: true, timeVisible: true, secondsVisible: true }
         });
         const rsiSeries = rsiChart.addLineSeries({ color: '#fcd535', lineWidth: 2 });
         rsiSeries.createPriceLine({ price: 70, color: '#f6465d', lineStyle: 2, axisLabelVisible: false });
         rsiSeries.createPriceLine({ price: 30, color: '#0ecb81', lineStyle: 2, axisLabelVisible: false });
 
-        // Sync Logic
         function syncCharts(c1, c2) {
             c1.timeScale().subscribeVisibleLogicalRangeChange(range => { if (range) c2.timeScale().setVisibleLogicalRange(range); });
             c2.timeScale().subscribeVisibleLogicalRangeChange(range => { if (range) c1.timeScale().setVisibleLogicalRange(range); });
         }
         syncCharts(chart, rsiChart);
 
-        // --- GLOBAL VARS & MEASURE LOGIC ---
+        // --- 3. ALARM MANAGER LOGIC (THE BRAIN) ---
+        let alarms = JSON.parse(localStorage.getItem('tradingAlarms')) || [];
+
+        function toggleAlarmPanel() {
+            const panel = document.getElementById('alarm-panel');
+            panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+            renderAlarms();
+        }
+
+        function addAlarm() {
+            const sym = document.getElementById('alarm-symbol').value;
+            const tf = parseInt(document.getElementById('alarm-tf').value);
+            const cond = document.getElementById('alarm-cond').value;
+            const val = parseFloat(document.getElementById('alarm-val').value);
+            const sound = document.getElementById('alarm-sound').value;
+
+            if (isNaN(val)) return alert("Please enter a valid RSI value");
+
+            const newAlarm = {
+                id: Date.now(),
+                symbol: sym,
+                tf: tf,
+                cond: cond, // '>' or '<'
+                val: val,
+                sound: sound,
+                lastTrigger: 0 // Timestamp to prevent spam
+            };
+
+            alarms.push(newAlarm);
+            saveAlarms();
+            renderAlarms();
+            
+            // Tes bunyi
+            playSound(sound);
+            showToast(`Alarm Added: ${sym} RSI ${cond} ${val}`, 'neutral');
+        }
+
+        function deleteAlarm(id) {
+            alarms = alarms.filter(a => a.id !== id);
+            saveAlarms();
+            renderAlarms();
+        }
+
+        function saveAlarms() { localStorage.setItem('tradingAlarms', JSON.stringify(alarms)); }
+
+        function renderAlarms() {
+            const container = document.getElementById('alarm-list-container');
+            container.innerHTML = '';
+            alarms.forEach(a => {
+                const div = document.createElement('div');
+                div.className = 'alarm-item';
+                div.innerHTML = `
+                    <span style="color:#fcd535"><b>${a.symbol}</b> [${a.tf}s]</span>
+                    <span>RSI ${a.cond} ${a.val}</span>
+                    <span style="font-size:11px; color:#848e9c">Sound: ${a.sound}</span>
+                    <button class="btn btn-danger" style="padding:2px 8px; font-size:10px" onclick="deleteAlarm(${a.id})">X</button>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function checkAlarms(dataSymbol, dataTF, rsiValue) {
+            if (!rsiValue) return;
+            const now = Date.now();
+            
+            alarms.forEach(a => {
+                // 1. Cek apakah Symbol & TF cocok
+                if (a.symbol === dataSymbol && a.tf === dataTF) {
+                    // 2. Cek Cooldown (Misal: Jangan bunyi lagi dalam 60 detik)
+                    if (now - a.lastTrigger < 60000) return;
+
+                    // 3. Cek Kondisi
+                    let triggered = false;
+                    if (a.cond === '>' && rsiValue > a.val) triggered = true;
+                    if (a.cond === '<' && rsiValue < a.val) triggered = true;
+
+                    if (triggered) {
+                        // FIRE ALARM!
+                        playSound(a.sound);
+                        
+                        const typeClass = a.cond === '>' ? 'alert-high' : 'alert-low';
+                        const msgText = a.cond === '>' ? 'Overbought' : 'Oversold';
+                        
+                        showToast(`ALARM: ${a.symbol} (${a.tf}s)<br>${msgText} (RSI: ${rsiValue.toFixed(2)})`, typeClass);
+                        
+                        // Update cooldown timestamp
+                        a.lastTrigger = now;
+                        saveAlarms();
+                    }
+                }
+            });
+        }
+
+        function showToast(msg, type) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `<div>${msg}</div>`;
+            container.appendChild(toast);
+            
+            // Auto remove after 5s
+            setTimeout(() => { toast.style.animation = 'slideIn 0.3s reverse'; setTimeout(() => toast.remove(), 300); }, 5000);
+        }
+
+        // --- 4. GLOBAL VARS ---
         let currentTF = 1;
         let currentSymbol = "BTCUSDT";
         const socket = io();
 
-        // Fitur Measure (Sama seperti sebelumnya)
+        // MEASURE TOOL
         let isMeasuring = false;
         let measureStartPrice = null;
         const measureTooltip = document.getElementById('measure-tooltip');
@@ -126,61 +293,38 @@
         function toggleMeasure() {
             isMeasuring = !isMeasuring;
             measureStartPrice = null;
-            if (isMeasuring) {
-                measureBtn.classList.add('active');
-                measureBtn.innerText = "Click Start Point...";
-            } else {
-                measureBtn.classList.remove('active');
-                measureBtn.innerText = "📐 Measure";
-                measureTooltip.style.display = 'none';
-            }
+            if (isMeasuring) { measureBtn.classList.add('active'); measureBtn.innerText = "Click Start..."; }
+            else { measureBtn.classList.remove('active'); measureBtn.innerText = "📐 Measure"; measureTooltip.style.display = 'none'; }
         }
 
         chart.subscribeClick((param) => {
             if (!isMeasuring || !param.point) return;
             const price = candleSeries.coordinateToPrice(param.point.y);
             if (!price) return;
-
-            if (measureStartPrice === null) {
-                measureStartPrice = price;
-                measureBtn.innerText = "Click End Point...";
-            } else {
+            if (measureStartPrice === null) { measureStartPrice = price; measureBtn.innerText = "Click End..."; }
+            else {
                 const diff = price - measureStartPrice;
                 const percent = (diff / measureStartPrice) * 100;
                 const settings = symbolSettings[currentSymbol];
-                const isUp = diff >= 0;
-                
-                measureTooltip.className = isUp ? "measure-up" : "measure-down";
-                measureTooltip.innerHTML = `
-                    <div style="font-size:14px; font-weight:bold">${isUp?"+":""}${percent.toFixed(2)}%</div>
-                    <div>${isUp?"+":""}${diff.toFixed(settings.precision)}</div>
-                `;
+                measureTooltip.innerHTML = `${percent.toFixed(2)}%<br>${diff.toFixed(settings.precision)}`;
                 measureTooltip.style.left = (param.point.x + 10) + 'px';
                 measureTooltip.style.top = (param.point.y + 10) + 'px';
                 measureTooltip.style.display = 'block';
-                isMeasuring = false;
-                measureStartPrice = null;
-                measureBtn.classList.remove('active');
-                measureBtn.innerText = "📐 Measure";
+                isMeasuring = false; measureStartPrice = null; measureBtn.classList.remove('active'); measureBtn.innerText = "📐 Measure";
             }
         });
 
-        // --- DATA HANDLER ---
+        // --- DATA LOGIC ---
         function requestData() {
             const settings = symbolSettings[currentSymbol] || { precision: 2, minMove: 0.01 };
             candleSeries.applyOptions({ priceFormat: { precision: settings.precision, minMove: settings.minMove } });
-
-            candleSeries.setData([]);
-            rsiSeries.setData([]);
-            volumeSeries.setData([]); // Reset Volume juga
-            measureTooltip.style.display = 'none';
-            
+            candleSeries.setData([]); rsiSeries.setData([]); volumeSeries.setData([]);
             socket.emit('request_history', {symbol: currentSymbol, tf: currentTF});
         }
 
         function changeTF(tf) {
             currentTF = tf;
-            document.querySelectorAll('button.active').forEach(b => { if(b.id!=='btn-measure') b.classList.remove('active'); });
+            document.querySelectorAll('.tf-selector button').forEach(b => b.classList.remove('active'));
             document.getElementById(`btn-${tf}`).classList.add('active');
             document.getElementById('tf-label').innerText = `[${tf}s]`;
             requestData();
@@ -188,69 +332,64 @@
 
         function changeSymbol(sym) { currentSymbol = sym; requestData(); }
 
-        // Menerima History
         socket.on('history_response', (msg) => {
             if (msg.symbol !== currentSymbol || msg.tf !== currentTF) return;
-            const candles = []; 
-            const rsis = [];
-            const volumes = []; // Array untuk Volume
-
+            const c=[], r=[], v=[];
             msg.data.forEach(d => {
-                // 1. Data Candle
-                candles.push({ time: d.start_time, open: d.open, high: d.high, low: d.low, close: d.close });
-                
-                // 2. Data RSI
-                if (d.rsi !== null) rsis.push({ time: d.start_time, value: d.rsi });
-
-                // 3. Data Volume (Warna Hijau jika Close >= Open, Merah jika turun)
-                const isUp = d.close >= d.open;
-                volumes.push({
-                    time: d.start_time,
-                    value: d.volume,
-                    color: isUp ? 'rgba(14, 203, 129, 0.5)' : 'rgba(246, 70, 93, 0.5)' // Transparan dikit biar elegan
-                });
+                c.push({ time: d.start_time, open: d.open, high: d.high, low: d.low, close: d.close });
+                if (d.rsi !== null) r.push({ time: d.start_time, value: d.rsi });
+                v.push({ time: d.start_time, value: d.volume, color: d.close >= d.open ? 'rgba(14,203,129,0.5)' : 'rgba(246,70,93,0.5)' });
             });
-
-            candleSeries.setData(candles);
-            rsiSeries.setData(rsis);
-            volumeSeries.setData(volumes); // Isi Volume
+            candleSeries.setData(c); rsiSeries.setData(r); volumeSeries.setData(v);
             chart.timeScale().fitContent();
         });
 
-        // Menerima Update Live
         function processData(msg) {
-            if (msg.symbol !== currentSymbol) return;
-
-            // Update Candle
-            candleSeries.update({ time: msg.start_time, open: msg.open, high: msg.high, low: msg.low, close: msg.close });
-            
-            // Update Volume
-            const isUp = msg.close >= msg.open;
-            volumeSeries.update({
-                time: msg.start_time,
-                value: msg.volume,
-                color: isUp ? 'rgba(14, 203, 129, 0.5)' : 'rgba(246, 70, 93, 0.5)'
-            });
-
-            // Update RSI
-            if (msg.rsi !== null) {
-                rsiSeries.update({ time: msg.start_time, value: msg.rsi });
-                document.getElementById('rsi').innerText = msg.rsi.toFixed(2);
+            // Update Chart HANYA jika simbol sesuai yang sedang dilihat
+            if (msg.symbol === currentSymbol && currentTF === msg.interval_hack) { // Hack: Kita perlu tau ini update TF berapa
+                 // Tapi tunggu, update eventnya kan unik per TF? (update_1s, update_5s)
+                 // Jadi kita handle di listener bawah.
             }
 
-            // Update Header Text
-            const pEl = document.getElementById('price');
-            const settings = symbolSettings[currentSymbol];
-            pEl.innerText = Number(msg.close).toFixed(settings.precision);
-            pEl.style.color = msg.close >= msg.open ? '#0ecb81' : '#f6465d';
+            // --- ALARM CHECKER (Berjalan di background untuk SEMUA TF & Symbol) ---
+            // Kita harus mengecek alarm setiap ada data masuk, walaupun chart sedang tidak menampilkan simbol itu.
+            // Data 'msg' berisi RSI terbaru.
+            // Tapi event socket kita terpisah per TF. Jadi kita inject TF manual di listener.
         }
 
+        // Listener Socket Terpisah per TF
         [1, 5, 15, 30].forEach(tf => {
-            socket.on(`update_${tf}s`, (msg) => { if (currentTF === tf) processData(msg); });
-            socket.on(`close_${tf}s`, (msg) => { if (currentTF === tf) processData(msg); });
+            const handleUpdate = (msg) => {
+                // 1. Gambar Chart (Jika sedang dilihat)
+                if (currentTF === tf && currentSymbol === msg.symbol) {
+                    candleSeries.update({ time: msg.start_time, open: msg.open, high: msg.high, low: msg.low, close: msg.close });
+                    const isUp = msg.close >= msg.open;
+                    volumeSeries.update({ time: msg.start_time, value: msg.volume, color: isUp ? 'rgba(14,203,129,0.5)' : 'rgba(246,70,93,0.5)' });
+                    if (msg.rsi !== null) {
+                        rsiSeries.update({ time: msg.start_time, value: msg.rsi });
+                        document.getElementById('rsi').innerText = msg.rsi.toFixed(2);
+                    }
+                    const pEl = document.getElementById('price');
+                    const settings = symbolSettings[currentSymbol];
+                    pEl.innerText = Number(msg.close).toFixed(settings.precision);
+                    pEl.style.color = isUp ? '#0ecb81' : '#f6465d';
+                }
+
+                // 2. CEK ALARM (Selalu jalan di background)
+                if (msg.rsi !== null) {
+                    checkAlarms(msg.symbol, tf, msg.rsi);
+                }
+            };
+
+            socket.on(`update_${tf}s`, handleUpdate);
+            socket.on(`close_${tf}s`, handleUpdate);
         });
 
+        // Init
+        // Load alarm list first to UI
+        renderAlarms();
         requestData();
+        
         window.addEventListener('resize', () => {
             chart.resize(document.getElementById('chart-div').clientWidth, document.getElementById('chart-div').clientHeight);
             rsiChart.resize(document.getElementById('rsi-div').clientWidth, document.getElementById('rsi-div').clientHeight);
