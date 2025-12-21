@@ -2,93 +2,121 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Binance 1-Second Chart</title>
+    <title>Binance 1s + RSI</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
     
     <style>
         body { background-color: #000; color: #fff; margin: 0; padding: 20px; font-family: monospace; }
-        #chart-container { width: 100%; height: 600px; border: 1px solid #333; }
-        .header { display: flex; justify-content: space-between; align-items: center; }
-        h1 { margin: 0 0 10px 0; font-size: 18px; }
+        
+        /* Layout Container */
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;}
+        
+        /* Grafik Harga */
+        #chart-container { width: 100%; height: 500px; border: 1px solid #333; }
+        
+        /* Grafik RSI */
+        #rsi-container { width: 100%; height: 150px; border: 1px solid #333; border-top: none; }
+        
+        h1 { margin: 0; font-size: 16px; }
         .live-price { color: #00ff00; font-weight: bold; }
+        .rsi-value { color: #f39c12; font-weight: bold; margin-left: 10px; }
         #status { font-size: 12px; color: yellow; }
     </style>
 </head>
 <body>
 
     <div class="header">
-        <h1>BTCUSDT - Realtime 1s <span id="price" class="live-price">Loading...</span></h1>
-        <div id="status">Connecting Socket...</div>
+        <div>
+            BTCUSDT 1s | Price: <span id="price" class="live-price">---</span> | 
+            RSI: <span id="rsi" class="rsi-value">---</span>
+        </div>
+        <div id="status">Connecting...</div>
     </div>
     
     <div id="chart-container"></div>
+    <div id="rsi-container"></div>
 
     <script>
-        // --- 1. SETUP CHART ---
+        // --- 1. SETUP CHART UTAMA ---
         const chartOptions = { 
-            layout: { textColor: 'white', background: { type: 'solid', color: 'black' } },
+            layout: { textColor: '#d1d4dc', background: { type: 'solid', color: 'black' } },
             grid: { vertLines: { color: '#333' }, horzLines: { color: '#333' } },
             timeScale: { timeVisible: true, secondsVisible: true },
             crosshair: { mode: 0 }
         };
 
         const container = document.getElementById('chart-container');
-        // Membuat Chart dengan library v3.8.0
         const chart = LightweightCharts.createChart(container, chartOptions);
 
-        // Menambahkan Series Candlestick
         const candleSeries = chart.addCandlestickSeries({
-            upColor: '#26a69a', downColor: '#ef5350', 
-            borderVisible: false, 
-            wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+            upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350'
         });
 
-        // --- 2. SETUP KONEKSI SOCKET ---
+        // --- 2. SETUP CHART RSI ---
+        const rsiContainer = document.getElementById('rsi-container');
+        const rsiChart = LightweightCharts.createChart(rsiContainer, {
+            ...chartOptions,
+            layout: { textColor: '#d1d4dc', background: { type: 'solid', color: 'black' } },
+            timeScale: { visible: false }, // Sembunyikan waktu di RSI agar tidak dobel
+        });
+
+        const rsiSeries = rsiChart.addLineSeries({
+            color: '#f39c12', lineWidth: 2,
+            priceScaleId: 'right', // Menempel di skala kanan
+        });
+        
+        // Garis batas Overbought (70) dan Oversold (30)
+        const overboughtLine = rsiSeries.createPriceLine({ price: 70, color: '#ef5350', lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+        const oversoldLine = rsiSeries.createPriceLine({ price: 30, color: '#26a69a', lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+
+        // --- 3. SINKRONISASI GERAKAN DUA CHART ---
+        // Agar kalau chart atas digeser/zoom, chart bawah ikut gerak
+        chart.timeScale().subscribeVisibleTimeRangeChange(function(timeRange) {
+            rsiChart.timeScale().setVisibleTimeRange(timeRange);
+        });
+
+        // --- 4. KONEKSI SOCKET ---
         const statusEl = document.getElementById('status');
-        
-        // Koneksi ke Python Backend
-        const socket = io.connect('http://127.0.0.1:5000', {
-            transports: ['websocket', 'polling'] 
-        });
+        const priceEl = document.getElementById('price');
+        const rsiEl = document.getElementById('rsi');
 
-        // --- 3. EVENT LISTENER ---
-        
-        socket.on('connect', function() {
-            console.log("✅ TERHUBUNG KE SERVER PYTHON!");
-            statusEl.innerText = "🟢 Connected";
-            statusEl.style.color = "#00ff00";
-        });
+        const socket = io.connect('http://127.0.0.1:5000', { transports: ['websocket', 'polling'] });
 
-        socket.on('connect_error', (error) => {
-            console.error("❌ Gagal Konek:", error);
-            statusEl.innerText = "🔴 Disconnected: " + error;
-            statusEl.style.color = "red";
-        });
+        socket.on('connect', () => { statusEl.innerText = "🟢 Connected"; statusEl.style.color = "#00ff00"; });
+        socket.on('connect_error', (e) => { statusEl.innerText = "🔴 " + e; statusEl.style.color = "red"; });
 
-        // Update Candle Sedang Jalan (Ticking)
-        socket.on('candle_update', function(msg) {
-            updateChart(msg);
-        });
-
-        // Update Candle Final (Close)
-        socket.on('candle_closed', function(msg) {
-            updateChart(msg);
-        });
-
-        function updateChart(data) {
+        // Fungsi Update Universal
+        function updateAll(data) {
+            // Update Candle
             candleSeries.update({
                 time: data.start_time,
-                open: data.open,
-                high: data.high,
-                low: data.low,
-                close: data.close
+                open: data.open, high: data.high, low: data.low, close: data.close
             });
             
-            const priceEl = document.getElementById('price');
+            // Update RSI
+            // Pastikan RSI bukan 50 (default) baru diplot biar grafik rapi
+            if (data.rsi) {
+                rsiSeries.update({
+                    time: data.start_time,
+                    value: data.rsi
+                });
+                
+                // Update Teks
+                rsiEl.innerText = data.rsi.toFixed(2);
+                
+                // Warnai teks RSI
+                if (data.rsi >= 70) rsiEl.style.color = '#ef5350'; // Merah (Overbought)
+                else if (data.rsi <= 30) rsiEl.style.color = '#26a69a'; // Hijau (Oversold)
+                else rsiEl.style.color = '#f39c12'; // Kuning (Normal)
+            }
+
             priceEl.innerText = data.close.toFixed(2);
             priceEl.style.color = data.close >= data.open ? '#26a69a' : '#ef5350';
         }
+
+        socket.on('candle_update', (msg) => updateAll(msg));
+        socket.on('candle_closed', (msg) => updateAll(msg));
     </script>
 </body>
 </html>
