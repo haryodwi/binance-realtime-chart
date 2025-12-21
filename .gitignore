@@ -1,0 +1,19 @@
+# File konfigurasi & Environment Variable (Tempat menyimpan API KEY)
+.env
+config.py
+secrets.py
+key.json
+
+# Cache Python (File sampah yang tidak perlu diupload)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment (Jika nanti pakai venv)
+venv/
+env/
+.venv/
+
+# IDE settings (vscode/pycharm)
+.vscode/
+.idea/
