@@ -19,7 +19,4 @@ env/
 .idea/
 
 # Log files
-history_1s.csv
-history_5s.csv
-history_15s.csv
-history_30s.csv
+data/

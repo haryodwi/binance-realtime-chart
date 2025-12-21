@@ -13,11 +13,18 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'rahasia_trading_pro'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# DAFTAR ASET YANG INGIN DIPANTAU (Huruf kecil semua)
+# DAFTAR ASET
 SYMBOLS = ["btcusdt", "1000pepeusdt"] 
 
-# URL Combined Stream (Satu jalur untuk banyak koin)
-# Format: /stream?streams=btcusdt@aggTrade/1000pepeusdt@aggTrade
+# FOLDER PENYIMPANAN DATA (Supaya Rapi)
+DATA_DIR = "data"
+
+# Buat folder jika belum ada
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
+    print(f"Folder '{DATA_DIR}' berhasil dibuat.")
+
+# URL Combined Stream
 stream_params = "/".join([f"{s}@aggTrade" for s in SYMBOLS])
 SOCKET = f"wss://fstream.binance.com/stream?streams={stream_params}"
 
@@ -25,10 +32,13 @@ MAX_HISTORY = 5000
 
 class CandleManager:
     def __init__(self, symbol, interval):
-        self.symbol = symbol.upper() # Simpan nama symbol (BTCUSDT)
+        self.symbol = symbol.upper()
         self.interval = interval
-        # Nama file dibedakan per simbol: history_BTCUSDT_1s.csv, history_1000PEPEUSDT_1s.csv
-        self.filename = f"history_{self.symbol}_{interval}s.csv"
+        
+        # Update Path: Simpan di dalam folder DATA_DIR
+        # Contoh: data/history_BTCUSDT_1s.csv
+        filename_only = f"history_{self.symbol}_{interval}s.csv"
+        self.filename = os.path.join(DATA_DIR, filename_only)
         
         self.history_candles = deque(maxlen=MAX_HISTORY)
         self.history_closes = deque(maxlen=MAX_HISTORY)
@@ -38,7 +48,7 @@ class CandleManager:
 
     def load_from_disk(self):
         if not os.path.exists(self.filename):
-            print(f"[{self.symbol} {self.interval}s] CSV baru.")
+            print(f"[{self.symbol} {self.interval}s] File baru di {self.filename}")
             return
 
         try:
@@ -50,7 +60,7 @@ class CandleManager:
                     if not row or len(row) < 6: continue
                     try:
                         c = {
-                            "symbol": self.symbol, # Tandai data ini milik siapa
+                            "symbol": self.symbol,
                             "start_time": int(row[0]),
                             "open": float(row[1]), "high": float(row[2]),
                             "low": float(row[3]), "close": float(row[4]),
@@ -60,7 +70,6 @@ class CandleManager:
                         temp_closes.append(c['close'])
                     except ValueError: continue
                 
-                # Hitung RSI Wilder
                 rsi_values = self._calculate_rsi_wilder_full(temp_closes)
                 
                 for i, c in enumerate(temp_candles):
@@ -70,7 +79,7 @@ class CandleManager:
                 
                 print(f"[{self.symbol} {self.interval}s] Loaded {len(self.history_candles)} candles.")
         except Exception as e:
-            print(f"Error loading CSV {self.filename}: {e}")
+            print(f"Error loading {self.filename}: {e}")
 
     def save_to_disk(self, candle):
         try:
@@ -80,7 +89,8 @@ class CandleManager:
                     candle['start_time'], candle['open'], candle['high'], 
                     candle['low'], candle['close'], candle['volume']
                 ])
-        except Exception: pass
+        except Exception as e:
+            print(f"Disk Error: {e}")
 
     def _calculate_rsi_wilder_full(self, closes, period=14):
         if not closes: return []
@@ -152,8 +162,7 @@ class CandleManager:
         socketio.emit(f'close_{self.interval}s', final_candle)
         self.last_finalized_time = self.candle['start_time'] + self.interval
 
-# --- INISIALISASI MANAGERS (NESTED DICTIONARY) ---
-# Struktur: managers['BTCUSDT'][5] = CandleManager Object
+# --- INIT MANAGERS ---
 managers = {}
 for s in SYMBOLS:
     symbol_upper = s.upper()
@@ -167,28 +176,22 @@ for s in SYMBOLS:
 @socketio.on('request_history')
 def handle_history_request(data):
     tf = int(data['tf'])
-    sym = data['symbol'] # Frontend harus kirim simbol apa yang diminta
-    
+    sym = data['symbol']
     if sym in managers and tf in managers[sym]:
         history = list(managers[sym][tf].history_candles)
         emit('history_response', {'symbol': sym, 'tf': tf, 'data': history})
 
 def on_message(ws, message):
     try:
-        # Format Combined Stream: {"stream": "btcusdt@aggTrade", "data": {...}}
         msg_json = json.loads(message)
         stream_name = msg_json['stream']
         data = msg_json['data']
-        
-        # Ekstrak simbol dari nama stream (misal: "btcusdt@aggTrade" -> "BTCUSDT")
         symbol_raw = stream_name.split('@')[0].upper()
         
         if 'p' in data:
             price = float(data['p'])
             qty = float(data['q'])
             tick_second = int(data['T'] / 1000)
-            
-            # Update manager yang sesuai dengan simbol tersebut
             if symbol_raw in managers:
                 for interval in managers[symbol_raw]:
                     managers[symbol_raw][interval].update(price, qty, tick_second)
@@ -210,5 +213,5 @@ if __name__ == '__main__':
     t = threading.Thread(target=run_stream)
     t.daemon = True
     t.start()
-    print("=== Server Multi-Asset Ready ===")
+    print("=== Server Multi-Asset (Folder Data) Ready ===")
     socketio.run(app, debug=True, use_reloader=False)

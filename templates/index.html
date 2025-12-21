@@ -2,25 +2,38 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Binance Multi-Asset Chart</title>
+    <title>Binance Pro Chart + Volume</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
     <style>
-        body { background: #0b0e11; color: #eaecef; font-family: sans-serif; margin: 0; padding: 20px; }
+        body { background: #0b0e11; color: #eaecef; font-family: sans-serif; margin: 0; padding: 20px; user-select: none; }
+        
+        /* Header */
         .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; background: #1e2329; padding: 10px; border-radius: 6px; }
-        
-        /* Dropdown Styling */
         select { background: #2b3139; color: #fcd535; border: 1px solid #474d57; padding: 5px 10px; border-radius: 4px; font-weight: bold; cursor: pointer; outline: none; }
-        
         .tf-selector button { background: #2b3139; color: #eaecef; border: none; padding: 6px 15px; cursor: pointer; border-radius: 4px; font-weight: bold; margin-left: 5px; }
         .tf-selector button.active { background: #fcd535; color: #1e2329; }
         
-        #main-container { display: flex; flex-direction: column; height: 80vh; }
-        #chart-div { flex: 3; border: 1px solid #2b3139; border-bottom: none; }
+        /* Tombol Measure */
+        #btn-measure { background: #474d57; color: #fff; border: 1px solid #848e9c; padding: 6px 15px; cursor: pointer; border-radius: 4px; margin-right: 15px; font-weight: bold;}
+        #btn-measure.active { background: #2962ff; border-color: #2962ff; color: white; box-shadow: 0 0 10px rgba(41, 98, 255, 0.5); }
+
+        #main-container { display: flex; flex-direction: column; height: 80vh; position: relative; }
+        #chart-div { flex: 3; border: 1px solid #2b3139; border-bottom: none; cursor: crosshair; }
         #rsi-div { flex: 1; border: 1px solid #2b3139; }
         
         .info { font-family: monospace; font-size: 14px; display: flex; align-items: center; gap: 15px; }
         .val { font-weight: bold; }
+
+        /* Tooltip Measure */
+        #measure-tooltip {
+            display: none; position: absolute; z-index: 100; padding: 10px; border-radius: 6px;
+            font-family: 'Roboto Mono', monospace; font-size: 12px; color: white;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3); pointer-events: none;
+            border: 1px solid rgba(255,255,255,0.2); white-space: pre-line;
+        }
+        .measure-up { background: rgba(14, 203, 129, 0.9); border-color: #0ecb81 !important; }
+        .measure-down { background: rgba(246, 70, 93, 0.9); border-color: #f6465d !important; }
     </style>
 </head>
 <body>
@@ -31,7 +44,7 @@
                 <option value="BTCUSDT">BTCUSDT</option>
                 <option value="1000PEPEUSDT">1000PEPEUSDT</option>
             </select>
-            
+            <button id="btn-measure" onclick="toggleMeasure()">📐 Measure</button>
             <span>TF: <span id="tf-label" style="color:#fcd535">[1s]</span></span>
             <span>Price: <span id="price" class="val">---</span></span>
             <span>RSI: <span id="rsi" class="val">---</span></span>
@@ -45,24 +58,45 @@
     </div>
 
     <div id="main-container">
+        <div id="measure-tooltip"></div>
         <div id="chart-div"></div>
         <div id="rsi-div"></div>
     </div>
 
     <script>
-        // --- SETUP GRAPH ---
+        const symbolSettings = {
+            "BTCUSDT": { precision: 2, minMove: 0.01 },
+            "1000PEPEUSDT": { precision: 7, minMove: 0.0000001 }
+        };
+
+        // --- SETUP CHART UTAMA ---
         const chartProps = {
             layout: { backgroundColor: '#161a1e', textColor: '#848e9c' },
             grid: { vertLines: { color: '#2b3139' }, horzLines: { color: '#2b3139' } },
             timeScale: { timeVisible: true, secondsVisible: true, borderColor: '#2b3139' },
-            crosshair: { mode: 0 }
+            crosshair: { mode: 1 },
+            rightPriceScale: { autoScale: true, minimumWidth: 75 }
         };
 
         const chart = LightweightCharts.createChart(document.getElementById('chart-div'), chartProps);
+
+        // 1. Series Volume (Histogram) - Ditambahkan DULUAN agar posisinya "di belakang" candle
+        const volumeSeries = chart.addHistogramSeries({
+            color: '#26a69a',
+            priceFormat: { type: 'volume' },
+            priceScaleId: '', // Overlay mode (berbagi sumbu dengan chart utama tapi diatur marginnya)
+            scaleMargins: {
+                top: 0.8, // Volume akan ditekan ke bawah (mulai dari 80% ke bawah layar)
+                bottom: 0,
+            },
+        });
+
+        // 2. Series Candle
         const candleSeries = chart.addCandlestickSeries({
             upColor: '#0ecb81', downColor: '#f6465d', borderVisible: false, wickUpColor: '#0ecb81', wickDownColor: '#f6465d'
         });
 
+        // --- SETUP RSI ---
         const rsiChart = LightweightCharts.createChart(document.getElementById('rsi-div'), {
             ...chartProps, 
             timeScale: { visible: true, timeVisible: true, secondsVisible: true }
@@ -71,69 +105,143 @@
         rsiSeries.createPriceLine({ price: 70, color: '#f6465d', lineStyle: 2, axisLabelVisible: false });
         rsiSeries.createPriceLine({ price: 30, color: '#0ecb81', lineStyle: 2, axisLabelVisible: false });
 
+        // Sync Logic
         function syncCharts(c1, c2) {
             c1.timeScale().subscribeVisibleLogicalRangeChange(range => { if (range) c2.timeScale().setVisibleLogicalRange(range); });
             c2.timeScale().subscribeVisibleLogicalRangeChange(range => { if (range) c1.timeScale().setVisibleLogicalRange(range); });
         }
         syncCharts(chart, rsiChart);
 
-        // --- LOGIKA UTAMA ---
+        // --- GLOBAL VARS & MEASURE LOGIC ---
         let currentTF = 1;
-        let currentSymbol = "BTCUSDT"; // Default
+        let currentSymbol = "BTCUSDT";
         const socket = io();
 
+        // Fitur Measure (Sama seperti sebelumnya)
+        let isMeasuring = false;
+        let measureStartPrice = null;
+        const measureTooltip = document.getElementById('measure-tooltip');
+        const measureBtn = document.getElementById('btn-measure');
+
+        function toggleMeasure() {
+            isMeasuring = !isMeasuring;
+            measureStartPrice = null;
+            if (isMeasuring) {
+                measureBtn.classList.add('active');
+                measureBtn.innerText = "Click Start Point...";
+            } else {
+                measureBtn.classList.remove('active');
+                measureBtn.innerText = "📐 Measure";
+                measureTooltip.style.display = 'none';
+            }
+        }
+
+        chart.subscribeClick((param) => {
+            if (!isMeasuring || !param.point) return;
+            const price = candleSeries.coordinateToPrice(param.point.y);
+            if (!price) return;
+
+            if (measureStartPrice === null) {
+                measureStartPrice = price;
+                measureBtn.innerText = "Click End Point...";
+            } else {
+                const diff = price - measureStartPrice;
+                const percent = (diff / measureStartPrice) * 100;
+                const settings = symbolSettings[currentSymbol];
+                const isUp = diff >= 0;
+                
+                measureTooltip.className = isUp ? "measure-up" : "measure-down";
+                measureTooltip.innerHTML = `
+                    <div style="font-size:14px; font-weight:bold">${isUp?"+":""}${percent.toFixed(2)}%</div>
+                    <div>${isUp?"+":""}${diff.toFixed(settings.precision)}</div>
+                `;
+                measureTooltip.style.left = (param.point.x + 10) + 'px';
+                measureTooltip.style.top = (param.point.y + 10) + 'px';
+                measureTooltip.style.display = 'block';
+                isMeasuring = false;
+                measureStartPrice = null;
+                measureBtn.classList.remove('active');
+                measureBtn.innerText = "📐 Measure";
+            }
+        });
+
+        // --- DATA HANDLER ---
         function requestData() {
-            // Reset Grafik
+            const settings = symbolSettings[currentSymbol] || { precision: 2, minMove: 0.01 };
+            candleSeries.applyOptions({ priceFormat: { precision: settings.precision, minMove: settings.minMove } });
+
             candleSeries.setData([]);
             rsiSeries.setData([]);
+            volumeSeries.setData([]); // Reset Volume juga
+            measureTooltip.style.display = 'none';
             
-            console.log(`Requesting ${currentSymbol} [${currentTF}s]`);
-            // Minta history dengan spesifik Simbol & TF
             socket.emit('request_history', {symbol: currentSymbol, tf: currentTF});
         }
 
         function changeTF(tf) {
             currentTF = tf;
-            document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('button.active').forEach(b => { if(b.id!=='btn-measure') b.classList.remove('active'); });
             document.getElementById(`btn-${tf}`).classList.add('active');
             document.getElementById('tf-label').innerText = `[${tf}s]`;
             requestData();
         }
 
-        function changeSymbol(sym) {
-            currentSymbol = sym;
-            requestData();
-        }
+        function changeSymbol(sym) { currentSymbol = sym; requestData(); }
 
-        // --- SOCKET LISTENER ---
+        // Menerima History
         socket.on('history_response', (msg) => {
-            // Filter: Pastikan data yang masuk sesuai dengan yang sedang kita lihat
             if (msg.symbol !== currentSymbol || msg.tf !== currentTF) return;
-
-            const candles = [];
+            const candles = []; 
             const rsis = [];
+            const volumes = []; // Array untuk Volume
 
             msg.data.forEach(d => {
+                // 1. Data Candle
                 candles.push({ time: d.start_time, open: d.open, high: d.high, low: d.low, close: d.close });
+                
+                // 2. Data RSI
                 if (d.rsi !== null) rsis.push({ time: d.start_time, value: d.rsi });
+
+                // 3. Data Volume (Warna Hijau jika Close >= Open, Merah jika turun)
+                const isUp = d.close >= d.open;
+                volumes.push({
+                    time: d.start_time,
+                    value: d.volume,
+                    color: isUp ? 'rgba(14, 203, 129, 0.5)' : 'rgba(246, 70, 93, 0.5)' // Transparan dikit biar elegan
+                });
             });
 
             candleSeries.setData(candles);
             rsiSeries.setData(rsis);
+            volumeSeries.setData(volumes); // Isi Volume
             chart.timeScale().fitContent();
         });
 
+        // Menerima Update Live
         function processData(msg) {
-            // Filter Data Live
             if (msg.symbol !== currentSymbol) return;
 
+            // Update Candle
             candleSeries.update({ time: msg.start_time, open: msg.open, high: msg.high, low: msg.low, close: msg.close });
+            
+            // Update Volume
+            const isUp = msg.close >= msg.open;
+            volumeSeries.update({
+                time: msg.start_time,
+                value: msg.volume,
+                color: isUp ? 'rgba(14, 203, 129, 0.5)' : 'rgba(246, 70, 93, 0.5)'
+            });
+
+            // Update RSI
             if (msg.rsi !== null) {
                 rsiSeries.update({ time: msg.start_time, value: msg.rsi });
                 document.getElementById('rsi').innerText = msg.rsi.toFixed(2);
             }
+
+            // Update Header Text
             const pEl = document.getElementById('price');
-            pEl.innerText = msg.close; // Pepe harganya kecil, jangan di-toFixed(2) dulu
+            const settings = symbolSettings[currentSymbol];
+            pEl.innerText = Number(msg.close).toFixed(settings.precision);
             pEl.style.color = msg.close >= msg.open ? '#0ecb81' : '#f6465d';
         }
 
@@ -142,10 +250,7 @@
             socket.on(`close_${tf}s`, (msg) => { if (currentTF === tf) processData(msg); });
         });
 
-        // Start
         requestData();
-        
-        // Resize Handler
         window.addEventListener('resize', () => {
             chart.resize(document.getElementById('chart-div').clientWidth, document.getElementById('chart-div').clientHeight);
             rsiChart.resize(document.getElementById('rsi-div').clientWidth, document.getElementById('rsi-div').clientHeight);
