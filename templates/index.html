@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Binance 1-Second Chart</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
+    
+    <style>
+        body { background-color: #000; color: #fff; margin: 0; padding: 20px; font-family: monospace; }
+        #chart-container { width: 100%; height: 600px; border: 1px solid #333; }
+        .header { display: flex; justify-content: space-between; align-items: center; }
+        h1 { margin: 0 0 10px 0; font-size: 18px; }
+        .live-price { color: #00ff00; font-weight: bold; }
+        #status { font-size: 12px; color: yellow; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>BTCUSDT - Realtime 1s <span id="price" class="live-price">Loading...</span></h1>
+        <div id="status">Connecting Socket...</div>
+    </div>
+    
+    <div id="chart-container"></div>
+
+    <script>
+        // --- 1. SETUP CHART ---
+        const chartOptions = { 
+            layout: { textColor: 'white', background: { type: 'solid', color: 'black' } },
+            grid: { vertLines: { color: '#333' }, horzLines: { color: '#333' } },
+            timeScale: { timeVisible: true, secondsVisible: true },
+            crosshair: { mode: 0 }
+        };
+
+        const container = document.getElementById('chart-container');
+        // Membuat Chart dengan library v3.8.0
+        const chart = LightweightCharts.createChart(container, chartOptions);
+
+        // Menambahkan Series Candlestick
+        const candleSeries = chart.addCandlestickSeries({
+            upColor: '#26a69a', downColor: '#ef5350', 
+            borderVisible: false, 
+            wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+        });
+
+        // --- 2. SETUP KONEKSI SOCKET ---
+        const statusEl = document.getElementById('status');
+        
+        // Koneksi ke Python Backend
+        const socket = io.connect('http://127.0.0.1:5000', {
+            transports: ['websocket', 'polling'] 
+        });
+
+        // --- 3. EVENT LISTENER ---
+        
+        socket.on('connect', function() {
+            console.log("✅ TERHUBUNG KE SERVER PYTHON!");
+            statusEl.innerText = "🟢 Connected";
+            statusEl.style.color = "#00ff00";
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error("❌ Gagal Konek:", error);
+            statusEl.innerText = "🔴 Disconnected: " + error;
+            statusEl.style.color = "red";
+        });
+
+        // Update Candle Sedang Jalan (Ticking)
+        socket.on('candle_update', function(msg) {
+            updateChart(msg);
+        });
+
+        // Update Candle Final (Close)
+        socket.on('candle_closed', function(msg) {
+            updateChart(msg);
+        });
+
+        function updateChart(data) {
+            candleSeries.update({
+                time: data.start_time,
+                open: data.open,
+                high: data.high,
+                low: data.low,
+                close: data.close
+            });
+            
+            const priceEl = document.getElementById('price');
+            priceEl.innerText = data.close.toFixed(2);
+            priceEl.style.color = data.close >= data.open ? '#26a69a' : '#ef5350';
+        }
+    </script>
+</body>
+</html>
