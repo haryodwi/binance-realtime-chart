@@ -2,26 +2,37 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Binance Memory Chart</title>
+    <title>Binance Pro Chart</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
     <style>
-        body { background: #000; color: #ccc; font-family: sans-serif; padding: 20px; }
-        .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        .tf-selector button { background: #333; color: #fff; border: 1px solid #555; padding: 5px 15px; cursor: pointer; }
-        .tf-selector button.active { background: #26a69a; border-color: #26a69a; font-weight: bold; }
-        #chart-container { height: 500px; border: 1px solid #333; }
-        #rsi-container { height: 150px; border: 1px solid #333; border-top: none; }
-        .price-info { font-family: monospace; font-size: 16px; }
+        body { background: #0b0e11; color: #eaecef; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; margin: 0;}
+        .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding: 10px; background: #1e2329; border-radius: 8px;}
+        
+        .tf-selector { display: flex; gap: 5px; }
+        .tf-selector button { 
+            background: #2b3139; color: #eaecef; border: none; padding: 6px 12px; 
+            cursor: pointer; border-radius: 4px; font-weight: 600; transition: 0.2s;
+        }
+        .tf-selector button:hover { background: #474d57; }
+        .tf-selector button.active { background: #fcd535; color: #1e2329; }
+        
+        #chart-container { height: 550px; border-radius: 8px 8px 0 0; overflow: hidden; }
+        #rsi-container { height: 180px; border-radius: 0 0 8px 8px; overflow: hidden; border-top: 2px solid #2b3139; }
+        
+        .price-info { font-family: 'Roboto Mono', monospace; font-size: 14px; }
+        .label { color: #848e9c; margin-right: 5px; }
+        .val { font-weight: bold; }
     </style>
 </head>
 <body>
 
     <div class="top-bar">
         <div class="price-info">
-            BTCUSDT <span id="tf-label" style="color:#26a69a">[1s]</span> | 
-            Price: <span id="price" style="color:#fff">---</span> | 
-            RSI: <span id="rsi" style="color:#f39c12">---</span>
+            <span class="label">SYMBOL</span><span class="val">BTCUSDT</span>
+            <span class="label" style="margin-left:15px">TF</span><span class="val" id="tf-label" style="color:#fcd535">1s</span>
+            <span class="label" style="margin-left:15px">PRICE</span><span class="val" id="price">---</span>
+            <span class="label" style="margin-left:15px">RSI</span><span class="val" id="rsi">---</span>
         </div>
         <div class="tf-selector">
             <button onclick="switchTF(1)" id="btn-1" class="active">1s</button>
@@ -35,26 +46,31 @@
     <div id="rsi-container"></div>
 
     <script>
-        // --- SETUP CHART ---
+        // --- SETUP CHART UTAMA ---
         const chartOptions = { 
-            layout: { textColor: '#d1d4dc', background: { type: 'solid', color: 'black' } },
-            grid: { vertLines: { color: '#222' }, horzLines: { color: '#222' } },
-            timeScale: { timeVisible: true, secondsVisible: true },
+            layout: { textColor: '#848e9c', background: { type: 'solid', color: '#161a1e' } },
+            grid: { vertLines: { color: '#2b3139' }, horzLines: { color: '#2b3139' } },
+            timeScale: { timeVisible: true, secondsVisible: true, borderColor: '#2b3139' },
+            rightPriceScale: { borderColor: '#2b3139' },
             crosshair: { mode: 0 }
         };
 
         const chart = LightweightCharts.createChart(document.getElementById('chart-container'), chartOptions);
         const candleSeries = chart.addCandlestickSeries({
-            upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+            upColor: '#0ecb81', downColor: '#f6465d', 
+            borderVisible: false, wickUpColor: '#0ecb81', wickDownColor: '#f6465d'
         });
 
+        // --- SETUP RSI ---
         const rsiChart = LightweightCharts.createChart(document.getElementById('rsi-container'), {
-            ...chartOptions, timeScale: { visible: false }
+            ...chartOptions, 
+            timeScale: { visible: false },
         });
-        const rsiSeries = rsiChart.addLineSeries({ color: '#f39c12', lineWidth: 2 });
-        rsiSeries.createPriceLine({ price: 70, color: '#ef5350', lineStyle: 2, axisLabelVisible: false });
-        rsiSeries.createPriceLine({ price: 30, color: '#26a69a', lineStyle: 2, axisLabelVisible: false });
+        const rsiSeries = rsiChart.addLineSeries({ color: '#fcd535', lineWidth: 2 });
+        rsiSeries.createPriceLine({ price: 70, color: '#f6465d', lineStyle: 2, axisLabelVisible: false });
+        rsiSeries.createPriceLine({ price: 30, color: '#0ecb81', lineStyle: 2, axisLabelVisible: false });
 
+        // Sinkronisasi Scroll
         chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
             rsiChart.timeScale().setVisibleLogicalRange(range);
         });
@@ -63,58 +79,60 @@
         let currentTF = 1;
         const socket = io();
 
-        // 1. Fungsi Ganti Timeframe
         function switchTF(tf) {
             currentTF = tf;
             
-            // Update Tombol UI
+            // UI Update
             document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
             document.getElementById(`btn-${tf}`).classList.add('active');
-            document.getElementById('tf-label').innerText = `[${tf}s]`;
+            document.getElementById('tf-label').innerText = `${tf}s`;
             
-            // BERSIHKAN CHART
+            // Bersihkan chart sementara
             candleSeries.setData([]);
             rsiSeries.setData([]);
             
-            // MINTA DATA MASA LALU KE SERVER (The Magic Step)
-            console.log(`Meminta history untuk TF ${tf}s...`);
+            // Minta Data History ke Server
+            console.log(`Switching to ${tf}s... requesting history.`);
             socket.emit('request_history', {tf: tf});
         }
 
-        // 2. Menerima Data History dari Server
+        // Terima History
         socket.on('history_response', (msg) => {
-            if (msg.tf !== currentTF) return; // Cegah balapan data
+            if (msg.tf !== currentTF) return;
 
-            const historyCandles = [];
-            const historyRSI = [];
+            const candles = [];
+            const rsis = [];
 
             msg.data.forEach(d => {
-                historyCandles.push({ time: d.start_time, open: d.open, high: d.high, low: d.low, close: d.close });
-                if (d.rsi) historyRSI.push({ time: d.start_time, value: d.rsi });
+                candles.push({ time: d.start_time, open: d.open, high: d.high, low: d.low, close: d.close });
+                // Hanya masukkan RSI jika valid (bukan null)
+                if (d.rsi !== null && d.rsi !== undefined) {
+                    rsis.push({ time: d.start_time, value: d.rsi });
+                }
             });
 
-            // Isi Chart Sekaligus
-            candleSeries.setData(historyCandles);
-            rsiSeries.setData(historyRSI);
-            console.log(`History loaded: ${msg.data.length} candles`);
+            candleSeries.setData(candles);
+            rsiSeries.setData(rsis);
         });
 
-        // 3. Menerima Data Live (Real-time)
+        // Terima Data Live
         function processData(tf, data) {
             if (tf !== currentTF) return;
             
             candleSeries.update({ time: data.start_time, open: data.open, high: data.high, low: data.low, close: data.close });
             
-            if(data.rsi) {
+            if(data.rsi !== null) {
                 rsiSeries.update({ time: data.start_time, value: data.rsi });
                 
-                // Update Text RSI
+                // Update Label Angka
                 const rsiEl = document.getElementById('rsi');
                 rsiEl.innerText = data.rsi.toFixed(2);
-                rsiEl.style.color = data.rsi >= 70 ? '#ef5350' : (data.rsi <= 30 ? '#26a69a' : '#f39c12');
+                rsiEl.style.color = data.rsi >= 70 ? '#f6465d' : (data.rsi <= 30 ? '#0ecb81' : '#fcd535');
             }
             
-            document.getElementById('price').innerText = data.close.toFixed(2);
+            const pEl = document.getElementById('price');
+            pEl.innerText = data.close.toFixed(2);
+            pEl.style.color = data.close >= data.open ? '#0ecb81' : '#f6465d';
         }
 
         [1, 5, 15, 30].forEach(tf => {
@@ -122,9 +140,8 @@
             socket.on(`close_${tf}s`, (msg) => processData(tf, msg));
         });
         
-        // Panggil 1x saat pertama load agar tidak kosong
+        // Start default
         switchTF(1);
-
     </script>
 </body>
 </html>

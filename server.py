@@ -1,51 +1,122 @@
 import threading
 import json
 import websocket
+import csv
+import os
+from collections import deque
 from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
 
-# --- KONFIGURASI ---
+# --- KONFIGURASI SERVER ---
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'rahasia'
+app.config['SECRET_KEY'] = 'rahasia_trading_pro'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 SYMBOL = "btcusdt"
 SOCKET = f"wss://fstream.binance.com/ws/{SYMBOL}@aggTrade"
+MAX_HISTORY = 2000  # Sesuai permintaan Anda
 
-# --- CLASS PENGELOLA CANDLE & MEMORI ---
+# --- CLASS PENGELOLA CANDLE DENGAN PENYIMPANAN FILE ---
 class CandleManager:
     def __init__(self, interval):
         self.interval = interval
+        self.filename = f"history_{interval}s.csv"
+        
+        # Buffer Memori (Deque otomatis membuang data lama jika > 2000)
+        self.history_candles = deque(maxlen=MAX_HISTORY)
+        self.history_closes = deque(maxlen=MAX_HISTORY) # Untuk hitungan RSI
+        
         self.candle = None
-        self.history_closes = []  # Untuk hitung rumus RSI
-        self.history_candles = [] # MEMORI: Menyimpan candle utuh untuk dikirim ke browser
         self.last_finalized_time = 0
+        
+        # 1. LOAD DATA DARI FILE SAAT STARTUP
+        self.load_from_disk()
+
+    def load_from_disk(self):
+        """Membaca file CSV agar data tidak hilang saat restart"""
+        if not os.path.exists(self.filename):
+            return # File belum ada, skip
+
+        try:
+            with open(self.filename, 'r') as f:
+                reader = csv.reader(f)
+                loaded_data = []
+                for row in reader:
+                    if not row: continue
+                    # Format CSV: time, open, high, low, close, volume
+                    try:
+                        c = {
+                            "start_time": int(row[0]),
+                            "open": float(row[1]), "high": float(row[2]),
+                            "low": float(row[3]), "close": float(row[4]),
+                            "volume": float(row[5])
+                        }
+                        loaded_data.append(c)
+                    except ValueError: continue
+                
+                # Masukkan ke Memori (Ambil 2000 terakhir saja)
+                recent_data = loaded_data[-MAX_HISTORY:]
+                for c in recent_data:
+                    self.history_candles.append(c)
+                    self.history_closes.append(c['close'])
+                
+                # Hitung ulang RSI untuk data terakhir agar grafik RSI mulus
+                self.recalculate_rsi_history()
+                
+                print(f"[{self.interval}s] Berhasil memuat {len(self.history_candles)} candle dari disk.")
+        except Exception as e:
+            print(f"Error loading {self.filename}: {e}")
+
+    def save_to_disk(self, candle):
+        """Menyimpan 1 baris candle baru ke file CSV (Append Mode)"""
+        try:
+            with open(self.filename, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    candle['start_time'], candle['open'], candle['high'], 
+                    candle['low'], candle['close'], candle['volume']
+                ])
+        except Exception as e:
+            print(f"Gagal menyimpan ke disk: {e}")
+
+    def recalculate_rsi_history(self):
+        """Hitung ulang RSI untuk semua history yang dimuat"""
+        # Kita butuh loop ulang karena RSI bergantung data sebelumnya
+        temp_closes = []
+        for i, candle in enumerate(self.history_candles):
+            temp_closes.append(candle['close'])
+            # Hitung RSI parsial
+            rsi_val = self._calculate_rsi_from_list(temp_closes)
+            # Update nilai RSI di dalam deque
+            self.history_candles[i]['rsi'] = rsi_val
 
     def update(self, price, qty, tick_second):
-        # 1. Inisialisasi Candle Baru
         if self.candle is None:
             self._new_candle(tick_second, price, qty)
             return
 
-        # 2. Cek Closing Candle
+        # Cek Closing Candle
         if tick_second > self.candle['start_time'] and tick_second % self.interval == 0:
             if tick_second > self.last_finalized_time:
                 self._close_candle()
                 self._new_candle(tick_second, price, qty)
         else:
-            # 3. Update Candle Berjalan
+            # Update Candle Berjalan
             self.candle['high'] = max(self.candle['high'], price)
             self.candle['low'] = min(self.candle['low'], price)
             self.candle['close'] = price
             self.candle['volume'] += qty
-            self.candle['rsi'] = self._calculate_rsi(price)
+            # Hitung RSI live
+            current_closes = list(self.history_closes) + [price]
+            self.candle['rsi'] = self._calculate_rsi_from_list(current_closes)
             
-            # Kirim update "Ticking" (hanya ke user yang sedang lihat TF ini)
             socketio.emit(f'update_{self.interval}s', self.candle)
 
     def _new_candle(self, start_time, price, qty):
         aligned_time = start_time - (start_time % self.interval)
-        rsi = self._calculate_rsi(price)
+        current_closes = list(self.history_closes) + [price]
+        rsi = self._calculate_rsi_from_list(current_closes)
+        
         self.candle = {
             "start_time": aligned_time,
             "open": price, "high": price, "low": price, "close": price,
@@ -53,28 +124,24 @@ class CandleManager:
         }
 
     def _close_candle(self):
-        # A. Update History Harga untuk Rumus RSI
-        self.history_closes.append(self.candle['close'])
-        if len(self.history_closes) > 1000: self.history_closes.pop(0)
-        
-        # B. SIMPAN KE MEMORI (Agar saat switch TF, grafik langsung penuh)
-        # Kita copy dictionary agar tidak tertimpa referensinya
         final_candle = self.candle.copy()
+        
+        # 1. Simpan ke Memori RAM
         self.history_candles.append(final_candle)
+        self.history_closes.append(final_candle['close'])
         
-        # Batasi memori server (misal simpan 500 candle terakhir per timeframe)
-        if len(self.history_candles) > 500: self.history_candles.pop(0)
+        # 2. Simpan ke HARD DISK (CSV)
+        self.save_to_disk(final_candle)
         
-        # Kirim sinyal candle FINAL
         socketio.emit(f'close_{self.interval}s', final_candle)
         self.last_finalized_time = self.candle['start_time'] + self.interval
 
-    def _calculate_rsi(self, current_price, period=14):
-        temp_prices = self.history_closes + [current_price]
-        if len(temp_prices) < period + 1: return 50
+    def _calculate_rsi_from_list(self, closes_list, period=14):
+        if len(closes_list) < period + 1: return None
         
+        # Ambil data secukupnya untuk efisiensi
+        recent = closes_list[-(period+1):]
         gains, losses = [], []
-        recent = temp_prices[-(period+1):]
         
         for i in range(1, len(recent)):
             diff = recent[i] - recent[i-1]
@@ -88,7 +155,7 @@ class CandleManager:
         rs = avg_gain / avg_loss
         return 100 - (100 / (1 + rs))
 
-# --- INISIALISASI ---
+# --- INIT MANAGERS ---
 managers = {
     1: CandleManager(1),
     5: CandleManager(5),
@@ -96,25 +163,28 @@ managers = {
     30: CandleManager(30)
 }
 
-# --- EVENT HANDLER KHUSUS REQUEST HISTORY ---
 @socketio.on('request_history')
 def handle_history_request(data):
-    # Saat browser minta data lama, kita ambil dari memori RAM Python
     tf = int(data['tf'])
     if tf in managers:
-        history = managers[tf].history_candles
-        # Kirim balik ke pengirim saja (emit)
+        # Konversi deque ke list agar bisa dikirim via JSON
+        history = list(managers[tf].history_candles)
         emit('history_response', {'tf': tf, 'data': history})
 
 # --- WEBSOCKET BINANCE ---
 def on_message(ws, message):
-    data = json.loads(message)
-    price = float(data['p'])
-    qty = float(data['q'])
-    tick_second = int(data['T'] / 1000)
-
-    for interval in managers:
-        managers[interval].update(price, qty, tick_second)
+    try:
+        data = json.loads(message)
+        if 'p' in data:
+            price = float(data['p'])
+            qty = float(data['q'])
+            tick_second = int(data['T'] / 1000)
+            
+            # Update SEMUA Timeframe di background
+            for interval in managers:
+                managers[interval].update(price, qty, tick_second)
+    except Exception as e:
+        print(f"Error processing data: {e}")
 
 def run_stream():
     ws = websocket.WebSocketApp(SOCKET, on_message=on_message)
@@ -127,5 +197,5 @@ if __name__ == '__main__':
     t = threading.Thread(target=run_stream)
     t.daemon = True
     t.start()
-    print("=== Server dengan Memory Ready di http://127.0.0.1:5000 ===")
+    print("=== Server Persistent (2000 Data) Ready ===")
     socketio.run(app, debug=True, use_reloader=False)
