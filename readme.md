@@ -50,14 +50,15 @@ pip install flask flask-socketio websocket-client
 ```bash
 
 python server.py
-Note: The first time you run this, the data/ folder will be created automatically.
 ```
+Note: The first time you run this, the data/ folder will be created automatically.
+
 
 ### 4. Access the Chart
 
 Open your web browser and navigate to:
 
-`[http://127.0.0.1:5000](http://127.0.0.1:5000)`
+`http://127.0.0.1:5000`
 
 ## ⚙️ Configuration
 To add more assets, open server.py and modify the SYMBOLS list:
@@ -84,9 +85,9 @@ const symbolSettings = {
 ```
 
 ## ⚠️ Important Notes
-Data Accumulation: Since Binance does not provide historical 1-second data via API, this tool acts as a recorder. When you first start it, the chart will be empty. Leave it running to build up your own historical database (CSV).
+**Data Accumulation**: Since Binance does not provide historical 1-second data via API, this tool acts as a recorder. When you first start it, the chart will be empty. Leave it running to build up your own historical database (CSV).
 
-Connection Issues (Indonesia Users): If you encounter [WinError 10060], your ISP is likely blocking Binance. Please use Cloudflare WARP (1.1.1.1) or a VPN to bypass the restriction.
+**Connection Issues (Indonesia Users)**: If you encounter [WinError 10060], your ISP is likely blocking Binance. Please use Cloudflare WARP (1.1.1.1) or a VPN to bypass the restriction.
 
 ## 🤝 Contributing
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
