@@ -2,117 +2,124 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Binance Pro Chart</title>
+    <title>Binance Synchronized Chart</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
     <style>
-        body { background: #0b0e11; color: #eaecef; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; margin: 0;}
-        .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding: 10px; background: #1e2329; border-radius: 8px;}
-        
-        .tf-selector { display: flex; gap: 5px; }
-        .tf-selector button { 
-            background: #2b3139; color: #eaecef; border: none; padding: 6px 12px; 
-            cursor: pointer; border-radius: 4px; font-weight: 600; transition: 0.2s;
-        }
-        .tf-selector button:hover { background: #474d57; }
+        body { background: #0b0e11; color: #eaecef; font-family: sans-serif; margin: 0; padding: 20px; }
+        .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; background: #1e2329; padding: 10px; border-radius: 6px; }
+        .tf-selector button { background: #2b3139; color: #eaecef; border: none; padding: 6px 15px; cursor: pointer; border-radius: 4px; font-weight: bold; margin-left: 5px; }
         .tf-selector button.active { background: #fcd535; color: #1e2329; }
         
-        #chart-container { height: 550px; border-radius: 8px 8px 0 0; overflow: hidden; }
-        #rsi-container { height: 180px; border-radius: 0 0 8px 8px; overflow: hidden; border-top: 2px solid #2b3139; }
+        /* Container Grafik */
+        #main-container { display: flex; flex-direction: column; height: 80vh; }
+        #chart-div { flex: 3; border: 1px solid #2b3139; border-bottom: none; }
+        #rsi-div { flex: 1; border: 1px solid #2b3139; }
         
-        .price-info { font-family: 'Roboto Mono', monospace; font-size: 14px; }
-        .label { color: #848e9c; margin-right: 5px; }
-        .val { font-weight: bold; }
+        .info { font-family: monospace; font-size: 14px; }
+        .val { font-weight: bold; margin-right: 15px; }
     </style>
 </head>
 <body>
 
     <div class="top-bar">
-        <div class="price-info">
-            <span class="label">SYMBOL</span><span class="val">BTCUSDT</span>
-            <span class="label" style="margin-left:15px">TF</span><span class="val" id="tf-label" style="color:#fcd535">1s</span>
-            <span class="label" style="margin-left:15px">PRICE</span><span class="val" id="price">---</span>
-            <span class="label" style="margin-left:15px">RSI</span><span class="val" id="rsi">---</span>
+        <div class="info">
+            BTCUSDT <span id="tf-label" style="color:#fcd535">[1s]</span>
+            Price: <span id="price" class="val">---</span>
+            RSI: <span id="rsi" class="val">---</span>
         </div>
         <div class="tf-selector">
-            <button onclick="switchTF(1)" id="btn-1" class="active">1s</button>
-            <button onclick="switchTF(5)" id="btn-5">5s</button>
-            <button onclick="switchTF(15)" id="btn-15">15s</button>
-            <button onclick="switchTF(30)" id="btn-30">30s</button>
+            <button onclick="changeTF(1)" id="btn-1" class="active">1s</button>
+            <button onclick="changeTF(5)" id="btn-5">5s</button>
+            <button onclick="changeTF(15)" id="btn-15">15s</button>
+            <button onclick="changeTF(30)" id="btn-30">30s</button>
         </div>
     </div>
 
-    <div id="chart-container"></div>
-    <div id="rsi-container"></div>
+    <div id="main-container">
+        <div id="chart-div"></div>
+        <div id="rsi-div"></div>
+    </div>
 
     <script>
-        // --- SETUP CHART UTAMA ---
-        const chartOptions = { 
-            layout: { textColor: '#848e9c', background: { type: 'solid', color: '#161a1e' } },
+        // --- 1. SETUP GRAPH ---
+        const chartProps = {
+            layout: { backgroundColor: '#161a1e', textColor: '#848e9c' },
             grid: { vertLines: { color: '#2b3139' }, horzLines: { color: '#2b3139' } },
             timeScale: { timeVisible: true, secondsVisible: true, borderColor: '#2b3139' },
-            rightPriceScale: { borderColor: '#2b3139' },
             crosshair: { mode: 0 }
         };
 
-        const chart = LightweightCharts.createChart(document.getElementById('chart-container'), chartOptions);
+        // Chart Atas (Candle)
+        const chart = LightweightCharts.createChart(document.getElementById('chart-div'), chartProps);
         const candleSeries = chart.addCandlestickSeries({
-            upColor: '#0ecb81', downColor: '#f6465d', 
-            borderVisible: false, wickUpColor: '#0ecb81', wickDownColor: '#f6465d'
+            upColor: '#0ecb81', downColor: '#f6465d', borderVisible: false, wickUpColor: '#0ecb81', wickDownColor: '#f6465d'
         });
 
-        // --- SETUP RSI ---
-        const rsiChart = LightweightCharts.createChart(document.getElementById('rsi-container'), {
-            ...chartOptions, 
-            timeScale: { visible: false },
+        // Chart Bawah (RSI)
+        const rsiChart = LightweightCharts.createChart(document.getElementById('rsi-div'), {
+            ...chartProps, 
+            timeScale: { visible: true, timeVisible: true, secondsVisible: true } // Time scale tetap ada tapi nanti disinkronkan
         });
         const rsiSeries = rsiChart.addLineSeries({ color: '#fcd535', lineWidth: 2 });
         rsiSeries.createPriceLine({ price: 70, color: '#f6465d', lineStyle: 2, axisLabelVisible: false });
         rsiSeries.createPriceLine({ price: 30, color: '#0ecb81', lineStyle: 2, axisLabelVisible: false });
 
-        // Sinkronisasi Scroll
-        chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-            rsiChart.timeScale().setVisibleLogicalRange(range);
-        });
+        // --- 2. THE ULTIMATE SYNC FUNCTION ---
+        // Ini kuncinya agar tidak geser-geser sendiri
+        function syncCharts(c1, c2) {
+            c1.timeScale().subscribeVisibleLogicalRangeChange(range => {
+                if (range) c2.timeScale().setVisibleLogicalRange(range);
+            });
+            c2.timeScale().subscribeVisibleLogicalRangeChange(range => {
+                if (range) c1.timeScale().setVisibleLogicalRange(range);
+            });
+        }
+        syncCharts(chart, rsiChart);
 
-        // --- LOGIKA UTAMA ---
+        // --- 3. LOGIKA DATA ---
         let currentTF = 1;
         const socket = io();
 
-        function switchTF(tf) {
+        function changeTF(tf) {
             currentTF = tf;
             
-            // UI Update
+            // Update Tombol
             document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
             document.getElementById(`btn-${tf}`).classList.add('active');
-            document.getElementById('tf-label').innerText = `${tf}s`;
+            document.getElementById('tf-label').innerText = `[${tf}s]`;
             
-            // Bersihkan chart sementara
+            // Reset Grafik
             candleSeries.setData([]);
             rsiSeries.setData([]);
             
-            // Minta Data History ke Server
-            console.log(`Switching to ${tf}s... requesting history.`);
+            // Minta Data History ke Python
+            console.log("Requesting history for", tf);
             socket.emit('request_history', {tf: tf});
         }
 
-        // Terima History
+        // Terima Data History
         socket.on('history_response', (msg) => {
             if (msg.tf !== currentTF) return;
+            
+            if (msg.data.length === 0) {
+                console.log("Data History Kosong (Belum ada rekaman CSV)");
+                return;
+            }
 
             const candles = [];
             const rsis = [];
 
             msg.data.forEach(d => {
                 candles.push({ time: d.start_time, open: d.open, high: d.high, low: d.low, close: d.close });
-                // Hanya masukkan RSI jika valid (bukan null)
-                if (d.rsi !== null && d.rsi !== undefined) {
-                    rsis.push({ time: d.start_time, value: d.rsi });
-                }
+                if (d.rsi !== null) rsis.push({ time: d.start_time, value: d.rsi });
             });
 
             candleSeries.setData(candles);
             rsiSeries.setData(rsis);
+            
+            // Auto fit agar grafik terlihat penuh
+            chart.timeScale().fitContent();
         });
 
         // Terima Data Live
@@ -120,16 +127,14 @@
             if (tf !== currentTF) return;
             
             candleSeries.update({ time: data.start_time, open: data.open, high: data.high, low: data.low, close: data.close });
-            
-            if(data.rsi !== null) {
+            if (data.rsi !== null) {
                 rsiSeries.update({ time: data.start_time, value: data.rsi });
                 
-                // Update Label Angka
+                // Update Text UI
                 const rsiEl = document.getElementById('rsi');
                 rsiEl.innerText = data.rsi.toFixed(2);
                 rsiEl.style.color = data.rsi >= 70 ? '#f6465d' : (data.rsi <= 30 ? '#0ecb81' : '#fcd535');
             }
-            
             const pEl = document.getElementById('price');
             pEl.innerText = data.close.toFixed(2);
             pEl.style.color = data.close >= data.open ? '#0ecb81' : '#f6465d';
@@ -139,9 +144,15 @@
             socket.on(`update_${tf}s`, (msg) => processData(tf, msg));
             socket.on(`close_${tf}s`, (msg) => processData(tf, msg));
         });
-        
-        // Start default
-        switchTF(1);
+
+        // Start
+        changeTF(1);
+
+        // Responsif saat resize window
+        window.addEventListener('resize', () => {
+            chart.resize(document.getElementById('chart-div').clientWidth, document.getElementById('chart-div').clientHeight);
+            rsiChart.resize(document.getElementById('rsi-div').clientWidth, document.getElementById('rsi-div').clientHeight);
+        });
     </script>
 </body>
 </html>

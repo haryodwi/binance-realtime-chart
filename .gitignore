@@ -17,3 +17,9 @@ env/
 # IDE settings (vscode/pycharm)
 .vscode/
 .idea/
+
+# Log files
+history_1s.csv
+history_5s.csv
+history_15s.csv
+history_30s.csv
