@@ -210,9 +210,18 @@ class CandleManager:
         self.last_finalized_time = self.candle['start_time'] + self.interval
 
 managers = {}
+# --- INIT MANAGERS ---
+managers = {}
 for s in SYMBOLS:
     symbol_upper = s.upper()
-    managers[symbol_upper] = {1: CandleManager(symbol_upper, 1), 5: CandleManager(symbol_upper, 5), 15: CandleManager(symbol_upper, 15), 30: CandleManager(symbol_upper, 30)}
+    managers[symbol_upper] = {
+        1: CandleManager(symbol_upper, 1),
+        5: CandleManager(symbol_upper, 5),
+        15: CandleManager(symbol_upper, 15),
+        30: CandleManager(symbol_upper, 30),
+        45: CandleManager(symbol_upper, 45), # Timeframe Baru
+        60: CandleManager(symbol_upper, 60)  # Timeframe Baru (1 Menit)
+    }
 
 @socketio.on('request_history')
 def handle_history_request(data):
