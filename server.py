@@ -25,12 +25,11 @@ class CandleManager:
     def __init__(self, symbol, interval):
         self.symbol = symbol.upper()
         self.interval = interval
-        filename_only = f"history_{self.symbol}_{interval}s.csv"
-        self.filename = os.path.join(DATA_DIR, filename_only)
+        self.filename = os.path.join(DATA_DIR, f"history_{self.symbol}_{interval}s.csv")
         
         self.history_candles = deque(maxlen=MAX_HISTORY)
         self.history_closes = deque(maxlen=MAX_HISTORY)
-        self.smc_markers = deque(maxlen=MAX_HISTORY) # MENYIMPAN MARKER SMC
+        self.smc_markers = deque(maxlen=MAX_HISTORY)
         
         self.candle = None
         self.last_finalized_time = 0
@@ -56,23 +55,24 @@ class CandleManager:
                         temp_closes.append(c['close'])
                     except ValueError: continue
                 
-                # Hitung RSI
+                # Hitung Indikator (RSI & EMA)
                 rsi_values = self._calculate_rsi_wilder_full(temp_closes)
+                ema_50 = self._calculate_ema(temp_closes, 50)
+                ema_200 = self._calculate_ema(temp_closes, 200)
                 
-                # Hitung SMC (Fractals & BOS)
-                # Kita butuh loop ulang karena SMC butuh data candle lengkap (High/Low)
+                # Hitung SMC
                 markers = self._calculate_smc_bulk(temp_candles)
 
                 for i, c in enumerate(temp_candles):
                     c['rsi'] = rsi_values[i]
+                    c['ema50'] = ema_50[i]
+                    c['ema200'] = ema_200[i]
                     self.history_candles.append(c)
                     self.history_closes.append(c['close'])
                 
-                # Simpan marker
-                for m in markers:
-                    self.smc_markers.append(m)
+                for m in markers: self.smc_markers.append(m)
                     
-                print(f"[{self.symbol} {self.interval}s] Loaded {len(self.history_candles)} candles & {len(self.smc_markers)} SMC markers.")
+                print(f"[{self.symbol} {self.interval}s] Loaded {len(self.history_candles)} candles.")
         except Exception as e:
             print(f"Error loading {self.filename}: {e}")
 
@@ -83,43 +83,36 @@ class CandleManager:
                 writer.writerow([candle['start_time'], candle['open'], candle['high'], candle['low'], candle['close'], candle['volume']])
         except: pass
 
-    # --- LOGIKA SMC LITE (FRACTAL + BOS) ---
+    # --- HITUNG EMA (EXPONENTIAL MOVING AVERAGE) ---
+    def _calculate_ema(self, closes, period):
+        if len(closes) < period: return [None] * len(closes)
+        
+        ema_values = [None] * (period - 1)
+        # SMA awal sebagai titik start
+        sma = sum(closes[:period]) / period
+        ema_values.append(sma)
+        
+        multiplier = 2 / (period + 1)
+        
+        for i in range(period, len(closes)):
+            # EMA Hari ini = (Harga - EMA Kemarin) * Multiplier + EMA Kemarin
+            val = (closes[i] - ema_values[-1]) * multiplier + ema_values[-1]
+            ema_values.append(val)
+            
+        return ema_values
+
     def _calculate_smc_bulk(self, candles):
-        """Mendeteksi Swing High/Low dan BOS dari sekumpulan candle"""
         markers = []
         if len(candles) < 5: return markers
-
-        # Window Fractal (2 kiri, 1 tengah, 2 kanan)
         for i in range(2, len(candles) - 2):
             curr = candles[i]
-            prev1 = candles[i-1]; prev2 = candles[i-2]
-            next1 = candles[i+1]; next2 = candles[i+2]
+            prev1, prev2 = candles[i-1], candles[i-2]
+            next1, next2 = candles[i+1], candles[i+2]
             
-            # Detect Swing High (Fractal Atas)
-            if curr['high'] > prev1['high'] and curr['high'] > prev2['high'] and \
-               curr['high'] > next1['high'] and curr['high'] > next2['high']:
-                markers.append({
-                    'time': curr['start_time'],
-                    'position': 'aboveBar',
-                    'color': '#ef5350', # Merah
-                    'shape': 'arrowDown',
-                    'text': 'H'
-                })
-            
-            # Detect Swing Low (Fractal Bawah)
-            if curr['low'] < prev1['low'] and curr['low'] < prev2['low'] and \
-               curr['low'] < next1['low'] and curr['low'] < next2['low']:
-                markers.append({
-                    'time': curr['start_time'],
-                    'position': 'belowBar',
-                    'color': '#26a69a', # Hijau
-                    'shape': 'arrowUp',
-                    'text': 'L'
-                })
-        
-        # TODO: Logika BOS (Break of Structure) bisa ditambahkan di sini dengan membandingkan harga close
-        # dengan harga Swing High/Low terakhir. Untuk versi Lite, kita tampilkan Swing dulu.
-        
+            if curr['high'] > prev1['high'] and curr['high'] > prev2['high'] and curr['high'] > next1['high'] and curr['high'] > next2['high']:
+                markers.append({'time': curr['start_time'], 'position': 'aboveBar', 'color': '#ef5350', 'shape': 'arrowDown', 'text': 'H'})
+            if curr['low'] < prev1['low'] and curr['low'] < prev2['low'] and curr['low'] < next1['low'] and curr['low'] < next2['low']:
+                markers.append({'time': curr['start_time'], 'position': 'belowBar', 'color': '#26a69a', 'shape': 'arrowUp', 'text': 'L'})
         return markers
 
     def _calculate_rsi_wilder_full(self, closes, period=14):
@@ -137,46 +130,62 @@ class CandleManager:
                 prev_avg_gain = (prev_avg_gain * (period - 1) + gain) / period
                 prev_avg_loss = (prev_avg_loss * (period - 1) + loss) / period
             if prev_avg_loss == 0: rsi = 100
-            else:
-                rs = prev_avg_gain / prev_avg_loss; rsi = 100 - (100 / (1 + rs))
+            else: rs = prev_avg_gain / prev_avg_loss; rsi = 100 - (100 / (1 + rs))
             rsi_result.append(rsi)
         return rsi_result
 
     def update(self, price, qty, tick_second):
-        if self.candle is None:
-            self._new_candle(tick_second, price, qty)
-            return
+        if self.candle is None: self._new_candle(tick_second, price, qty); return
+        
         if tick_second > self.candle['start_time'] and tick_second % self.interval == 0:
-            if tick_second > self.last_finalized_time:
-                self._close_candle()
-                self._new_candle(tick_second, price, qty)
+            if tick_second > self.last_finalized_time: self._close_candle(); self._new_candle(tick_second, price, qty)
         else:
             self.candle['high'] = max(self.candle['high'], price)
             self.candle['low'] = min(self.candle['low'], price)
             self.candle['close'] = price
             self.candle['volume'] += qty
             
-            # Optimasi RSI Live
+            # Optimasi Perhitungan Live (Ambil 500 data terakhir)
             history_len = len(self.history_closes)
             start_index = max(0, history_len - 500)
             recent_closes = [self.history_closes[i] for i in range(start_index, history_len)]
             recent_closes.append(price)
+            
+            # Hitung Indikator Live
             live_rsis = self._calculate_rsi_wilder_full(recent_closes)
             if live_rsis: self.candle['rsi'] = live_rsis[-1]
+            
+            # Hitung EMA Live
+            live_ema50 = self._calculate_ema(recent_closes, 50)
+            live_ema200 = self._calculate_ema(recent_closes, 200)
+            if live_ema50: self.candle['ema50'] = live_ema50[-1]
+            if live_ema200: self.candle['ema200'] = live_ema200[-1]
             
             socketio.emit(f'update_{self.interval}s', self.candle)
 
     def _new_candle(self, start_time, price, qty):
         aligned_time = start_time - (start_time % self.interval)
-        # RSI awal
+        
+        # Init Indikator Awal
         history_len = len(self.history_closes)
         start_index = max(0, history_len - 500)
         recent_closes = [self.history_closes[i] for i in range(start_index, history_len)]
         recent_closes.append(price)
+        
         live_rsis = self._calculate_rsi_wilder_full(recent_closes)
         rsi = live_rsis[-1] if live_rsis else 50
         
-        self.candle = {"symbol": self.symbol, "start_time": aligned_time, "open": price, "high": price, "low": price, "close": price, "volume": qty, "rsi": rsi}
+        live_ema50 = self._calculate_ema(recent_closes, 50)
+        ema50 = live_ema50[-1] if live_ema50 else None
+        
+        live_ema200 = self._calculate_ema(recent_closes, 200)
+        ema200 = live_ema200[-1] if live_ema200 else None
+
+        self.candle = {
+            "symbol": self.symbol, "start_time": aligned_time, 
+            "open": price, "high": price, "low": price, "close": price, 
+            "volume": qty, "rsi": rsi, "ema50": ema50, "ema200": ema200
+        }
 
     def _close_candle(self):
         final_candle = self.candle.copy()
@@ -184,27 +193,17 @@ class CandleManager:
         self.history_closes.append(final_candle['close'])
         self.save_to_disk(final_candle)
         
-        # Hitung SMC Marker untuk candle yang baru saja close
-        # Kita ambil 5 candle terakhir untuk cek apakah candle tengah (i-2) adalah fractal
+        # SMC Check (Sama seperti sebelumnya)
         if len(self.history_candles) >= 5:
-            # Ambil snapshot 5 candle terakhir dari deque
             last_5 = list(self.history_candles)[-5:]
-            # Cek candle tengah (indeks 2)
-            curr = last_5[2]
-            prev1 = last_5[1]; prev2 = last_5[0]
-            next1 = last_5[3]; next2 = last_5[4]
-            
+            curr, prev1, prev2, next1, next2 = last_5[2], last_5[1], last_5[0], last_5[3], last_5[4]
             new_marker = None
-            # Swing High
             if curr['high'] > prev1['high'] and curr['high'] > prev2['high'] and curr['high'] > next1['high'] and curr['high'] > next2['high']:
                 new_marker = {'time': curr['start_time'], 'position': 'aboveBar', 'color': '#ef5350', 'shape': 'arrowDown', 'text': 'H'}
-            # Swing Low
             elif curr['low'] < prev1['low'] and curr['low'] < prev2['low'] and curr['low'] < next1['low'] and curr['low'] < next2['low']:
                 new_marker = {'time': curr['start_time'], 'position': 'belowBar', 'color': '#26a69a', 'shape': 'arrowUp', 'text': 'L'}
-            
             if new_marker:
                 self.smc_markers.append(new_marker)
-                # Kirim marker baru ke frontend via socket event khusus
                 socketio.emit(f'smc_new_{self.interval}s', {'symbol': self.symbol, 'marker': new_marker})
 
         socketio.emit(f'close_{self.interval}s', final_candle)
@@ -213,39 +212,29 @@ class CandleManager:
 managers = {}
 for s in SYMBOLS:
     symbol_upper = s.upper()
-    managers[symbol_upper] = {
-        1: CandleManager(symbol_upper, 1),
-        5: CandleManager(symbol_upper, 5),
-        15: CandleManager(symbol_upper, 15),
-        30: CandleManager(symbol_upper, 30)
-    }
+    managers[symbol_upper] = {1: CandleManager(symbol_upper, 1), 5: CandleManager(symbol_upper, 5), 15: CandleManager(symbol_upper, 15), 30: CandleManager(symbol_upper, 30)}
 
 @socketio.on('request_history')
 def handle_history_request(data):
     tf = int(data['tf']); sym = data['symbol']
     if sym in managers and tf in managers[sym]:
         history = list(managers[sym][tf].history_candles)
-        markers = list(managers[sym][tf].smc_markers) # Kirim juga marker SMC
+        markers = list(managers[sym][tf].smc_markers)
         emit('history_response', {'symbol': sym, 'tf': tf, 'data': history, 'smc': markers})
 
 def on_message(ws, message):
     try:
-        msg_json = json.loads(message)
-        stream_name = msg_json['stream']
-        data = msg_json['data']
+        msg_json = json.loads(message); stream_name = msg_json['stream']; data = msg_json['data']
         symbol_raw = stream_name.split('@')[0].upper()
         if 'p' in data:
             price = float(data['p']); qty = float(data['q']); tick_second = int(data['T'] / 1000)
             if symbol_raw in managers:
-                for interval in managers[symbol_raw]:
-                    managers[symbol_raw][interval].update(price, qty, tick_second)
+                for interval in managers[symbol_raw]: managers[symbol_raw][interval].update(price, qty, tick_second)
     except: pass
 
 def run_stream():
     while True:
-        try:
-            ws = websocket.WebSocketApp(SOCKET, on_message=on_message)
-            ws.run_forever()
+        try: ws = websocket.WebSocketApp(SOCKET, on_message=on_message); ws.run_forever()
         except: time.sleep(2)
 
 @app.route('/')
@@ -253,5 +242,5 @@ def index(): return render_template('index.html')
 
 if __name__ == '__main__':
     t = threading.Thread(target=run_stream); t.daemon = True; t.start()
-    print("=== Server SMC Lite Ready ===")
+    print("=== Server Pro (EMA + SMC) Ready ===")
     socketio.run(app, debug=True, use_reloader=False)

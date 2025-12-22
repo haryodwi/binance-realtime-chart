@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Binance Pro Chart + SMC</title>
+    <title>Binance Pro Chart + EMA</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
     <style>
@@ -36,13 +36,13 @@
         <div class="info">
             <select id="symbol-select" onchange="changeSymbol(this.value)"><option value="BTCUSDT">BTCUSDT</option><option value="1000PEPEUSDT">1000PEPEUSDT</option></select>
             <select id="timezone-select" onchange="changeTimezone(this.value)">
-                <option value="America/New_York" selected>New York (UTC-5)</option>
-                <option value="Asia/Jakarta">Jakarta (UTC+7)</option>
+                <option value="America/New_York" selected>New York</option><option value="Asia/Jakarta">Jakarta</option>
             </select>
             <button class="btn" id="btn-measure" onclick="toggleMeasure()">📐 Measure</button>
             <button class="btn" id="btn-alarm-toggle" onclick="toggleAlarmPanel()">🔔 Alarms</button>
-            
             <button class="btn" id="btn-smc" onclick="toggleSMC()">⚡ SMC</button>
+            
+            <button class="btn" id="btn-ema" onclick="toggleEMA()">📈 EMA</button>
 
             <span>TF: <span id="tf-label" style="color:#fcd535">[1s]</span></span>
             <span>Price: <span id="price" class="val">---</span></span>
@@ -73,29 +73,28 @@
         <div id="rsi-div"></div>
     </div>
     <script>
-        // --- 0. AUDIO ---
         const audioCtx = new (window.AudioContext||window.webkitAudioContext)();
-        function playSound(type) {
-            if(audioCtx.state==='suspended')audioCtx.resume();
-            const osc=audioCtx.createOscillator(),gn=audioCtx.createGain();
-            osc.connect(gn);gn.connect(audioCtx.destination);
-            if(type==='beep'){osc.type='sine';osc.frequency.setValueAtTime(800,audioCtx.currentTime);osc.frequency.exponentialRampToValueAtTime(300,audioCtx.currentTime+0.1);gn.gain.setValueAtTime(0.3,audioCtx.currentTime);gn.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+0.1);osc.start();osc.stop(audioCtx.currentTime+0.1);}
-            else if(type==='bell'){osc.type='triangle';osc.frequency.setValueAtTime(600,audioCtx.currentTime);gn.gain.setValueAtTime(0.3,audioCtx.currentTime);gn.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+1.5);osc.start();osc.stop(audioCtx.currentTime+1.5);}
-        }
-        
-        // --- 1. GLOBALS ---
+        function playSound(type) { if(audioCtx.state==='suspended')audioCtx.resume(); const osc=audioCtx.createOscillator(),gn=audioCtx.createGain(); osc.connect(gn);gn.connect(audioCtx.destination); if(type==='beep'){osc.type='sine';osc.frequency.setValueAtTime(800,audioCtx.currentTime);osc.frequency.exponentialRampToValueAtTime(300,audioCtx.currentTime+0.1);gn.gain.setValueAtTime(0.3,audioCtx.currentTime);gn.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+0.1);osc.start();osc.stop(audioCtx.currentTime+0.1);} else if(type==='bell'){osc.type='triangle';osc.frequency.setValueAtTime(600,audioCtx.currentTime);gn.gain.setValueAtTime(0.3,audioCtx.currentTime);gn.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+1.5);osc.start();osc.stop(audioCtx.currentTime+1.5);} }
+
         const symbolSettings = {"BTCUSDT": {precision:2,minMove:0.01}, "1000PEPEUSDT": {precision:7,minMove:0.0000001}};
         let currentTF=1, currentSymbol="BTCUSDT", currentTimezone="America/New_York";
-        let smcEnabled = false; // STATUS SMC (Default Mati)
-        let smcMarkersCache = []; // Simpan marker di memori agar bisa di on/off instan
+        let smcEnabled = false, smcMarkersCache = [];
+        let emaEnabled = false; // STATUS EMA (Default Mati)
+        
         const socket = io();
-
-        // --- 2. CHART ---
         const timeFormatter = (ts) => new Date(ts*1000).toLocaleTimeString('en-US',{timeZone:currentTimezone,hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
         const chartProps = { layout:{backgroundColor:'#161a1e',textColor:'#848e9c'}, grid:{vertLines:{color:'#2b3139'},horzLines:{color:'#2b3139'}}, timeScale:{timeVisible:true,secondsVisible:true,borderColor:'#2b3139'}, localization:{timeFormatter:timeFormatter}, crosshair:{mode:1}, rightPriceScale:{autoScale:true,minimumWidth:75}};
+        
         const chart = LightweightCharts.createChart(document.getElementById('chart-div'), chartProps);
         const volumeSeries = chart.addHistogramSeries({color:'#26a69a',priceFormat:{type:'volume'},priceScaleId:'',scaleMargins:{top:0.8,bottom:0}});
         const candleSeries = chart.addCandlestickSeries({upColor:'#0ecb81',downColor:'#f6465d',borderVisible:false,wickUpColor:'#0ecb81',wickDownColor:'#f6465d'});
+        
+        // --- TAMBAHAN SERIES EMA ---
+        // EMA 50 = Kuning (Garis Sinyal Cepat)
+        const ema50Series = chart.addLineSeries({ color: '#fcd535', lineWidth: 2, visible: false });
+        // EMA 200 = Ungu (Tren Utama)
+        const ema200Series = chart.addLineSeries({ color: '#9b59b6', lineWidth: 2, visible: false });
+
         const rsiChart = LightweightCharts.createChart(document.getElementById('rsi-div'), {...chartProps,timeScale:{visible:true,timeVisible:true,secondsVisible:true}});
         const rsiSeries = rsiChart.addLineSeries({color:'#fcd535',lineWidth:2});
         rsiSeries.createPriceLine({price:70,color:'#f6465d',lineStyle:2,axisLabelVisible:false});
@@ -104,26 +103,53 @@
         syncCharts(chart,rsiChart);
 
         function changeTimezone(tz) { currentTimezone=tz; const loc={timeFormatter:timeFormatter}; chart.applyOptions({localization:loc}); rsiChart.applyOptions({localization:loc}); }
+        function toggleSMC() { smcEnabled = !smcEnabled; const btn = document.getElementById('btn-smc'); if(smcEnabled) { btn.classList.add('active'); candleSeries.setMarkers(smcMarkersCache); } else { btn.classList.remove('active'); candleSeries.setMarkers([]); } }
 
-        // --- 3. SMC LOGIC ---
-        function toggleSMC() {
-            smcEnabled = !smcEnabled;
-            const btn = document.getElementById('btn-smc');
-            if(smcEnabled) {
+        // --- LOGIKA TOGGLE EMA ---
+        function toggleEMA() {
+            emaEnabled = !emaEnabled;
+            const btn = document.getElementById('btn-ema');
+            // Ubah visibilitas garis (Data tetap ada, cuma di-hide)
+            if (emaEnabled) {
                 btn.classList.add('active');
-                candleSeries.setMarkers(smcMarkersCache); // Tampilkan marker dari cache
+                ema50Series.applyOptions({ visible: true });
+                ema200Series.applyOptions({ visible: true });
             } else {
                 btn.classList.remove('active');
-                candleSeries.setMarkers([]); // Hapus semua marker
+                ema50Series.applyOptions({ visible: false });
+                ema200Series.applyOptions({ visible: false });
             }
         }
 
-        // --- 4. DATA HANDLER ---
         function requestData() {
+            // Ambil settingan presisi (Misal: PEPE = 7 desimal)
             const s = symbolSettings[currentSymbol]||{precision:2,minMove:0.01};
-            candleSeries.applyOptions({priceFormat:{precision:s.precision,minMove:s.minMove}});
-            candleSeries.setData([]); rsiSeries.setData([]); volumeSeries.setData([]);
-            smcMarkersCache = []; // Reset cache marker
+            
+            // Terapkan presisi ke Candle (yang lama)
+            candleSeries.applyOptions({
+                priceFormat: { precision: s.precision, minMove: s.minMove }
+            });
+
+            // --- PERBAIKAN: TERAPKAN PRESISI KE EMA JUGA ---
+            // Agar garis EMA tidak dibulatkan jadi 0.00
+            ema50Series.applyOptions({
+                priceFormat: { precision: s.precision, minMove: s.minMove }
+            });
+            ema200Series.applyOptions({
+                priceFormat: { precision: s.precision, minMove: s.minMove }
+            });
+            // ------------------------------------------------
+
+            // Reset Data Visual
+            candleSeries.setData([]); 
+            rsiSeries.setData([]); 
+            volumeSeries.setData([]);
+            ema50Series.setData([]); 
+            ema200Series.setData([]); 
+            
+            smcMarkersCache = [];
+            
+            // Minta data baru ke server
             socket.emit('request_history', {symbol:currentSymbol, tf:currentTF});
         }
         function changeTF(tf) { currentTF=tf; document.querySelectorAll('.tf-selector button').forEach(b=>b.classList.remove('active')); document.getElementById(`btn-${tf}`).classList.add('active'); document.getElementById('tf-label').innerText=`[${tf}s]`; requestData(); }
@@ -131,42 +157,39 @@
 
         socket.on('history_response', (msg) => {
             if(msg.symbol!==currentSymbol || msg.tf!==currentTF) return;
-            const c=[], r=[], v=[];
+            const c=[], r=[], v=[], e50=[], e200=[];
             msg.data.forEach(d=>{
                 c.push({time:d.start_time,open:d.open,high:d.high,low:d.low,close:d.close});
                 if(d.rsi!==null) r.push({time:d.start_time,value:d.rsi});
                 v.push({time:d.start_time,value:d.volume,color:d.close>=d.open?'rgba(14,203,129,0.5)':'rgba(246,70,93,0.5)'});
+                
+                // Masukkan data EMA
+                if(d.ema50) e50.push({time:d.start_time, value:d.ema50});
+                if(d.ema200) e200.push({time:d.start_time, value:d.ema200});
             });
             candleSeries.setData(c); rsiSeries.setData(r); volumeSeries.setData(v);
+            ema50Series.setData(e50); ema200Series.setData(e200);
             
-            // Simpan Marker SMC yang dikirim server
             smcMarkersCache = msg.smc || [];
-            if(smcEnabled) candleSeries.setMarkers(smcMarkersCache); // Tampilkan kalau sedang ON
-            
+            if(smcEnabled) candleSeries.setMarkers(smcMarkersCache);
             chart.timeScale().fitContent();
         });
 
-        // Listener Update SMC Real-time
         [1,5,15,30].forEach(tf => {
-            socket.on(`smc_new_${tf}s`, (msg) => {
-                if(currentSymbol === msg.symbol && currentTF === tf) {
-                    smcMarkersCache.push(msg.marker); // Tambahkan ke cache
-                    // Kalau SMC nyala, update tampilan
-                    if(smcEnabled) {
-                        // Lightweight Charts butuh array yang terurut, jadi kita set ulang
-                        // Note: setMarkers menimpa marker lama, bukan menambah
-                        candleSeries.setMarkers(smcMarkersCache.sort((a,b) => a.time - b.time));
-                    }
-                }
-            });
-
-            // Update Candle biasa
+            socket.on(`smc_new_${tf}s`, (msg) => { if(currentSymbol===msg.symbol&&currentTF===tf){ smcMarkersCache.push(msg.marker); if(smcEnabled) candleSeries.setMarkers(smcMarkersCache.sort((a,b)=>a.time-b.time)); } });
+            
             const handleUpdate = (msg) => {
                 if(currentTF===tf && currentSymbol===msg.symbol){
                     candleSeries.update({time:msg.start_time,open:msg.open,high:msg.high,low:msg.low,close:msg.close});
                     const isUp=msg.close>=msg.open;
                     volumeSeries.update({time:msg.start_time,value:msg.volume,color:isUp?'rgba(14,203,129,0.5)':'rgba(246,70,93,0.5)'});
+                    
                     if(msg.rsi!==null){rsiSeries.update({time:msg.start_time,value:msg.rsi});document.getElementById('rsi').innerText=msg.rsi.toFixed(2);}
+                    
+                    // Update EMA Real-time
+                    if(msg.ema50) ema50Series.update({time:msg.start_time, value:msg.ema50});
+                    if(msg.ema200) ema200Series.update({time:msg.start_time, value:msg.ema200});
+
                     const pEl=document.getElementById('price');const s=symbolSettings[currentSymbol];
                     pEl.innerText=Number(msg.close).toFixed(s.precision);pEl.style.color=isUp?'#0ecb81':'#f6465d';
                 }
@@ -175,7 +198,6 @@
             socket.on(`update_${tf}s`, handleUpdate); socket.on(`close_${tf}s`, handleUpdate);
         });
 
-        // --- ALARM & MEASURE & AUDIO (Code Sama Seperti Sebelumnya, disingkat agar muat) ---
         let alarms=JSON.parse(localStorage.getItem('tradingAlarms'))||[];
         function toggleAlarmPanel(){const p=document.getElementById('alarm-panel');p.style.display=p.style.display==='block'?'none':'block';renderAlarms();}
         function addAlarm(){const sym=document.getElementById('alarm-symbol').value,tf=parseInt(document.getElementById('alarm-tf').value),cond=document.getElementById('alarm-cond').value,val=parseFloat(document.getElementById('alarm-val').value),sound=document.getElementById('alarm-sound').value;if(isNaN(val))return alert("Invalid Value");alarms.push({id:Date.now(),symbol:sym,tf:tf,cond:cond,val:val,sound:sound,lastTrigger:0});saveAlarms();renderAlarms();playSound(sound);showToast('Alarm Added','neutral');}

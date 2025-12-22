@@ -4,7 +4,7 @@ A powerful, self-hosted technical analysis dashboard built with Python and JavaS
 
 It is designed for scalpers and algo-traders who need granular data (1s, 5s) and custom alerts that standard platforms often charge for.
 
-![Dashboard Screenshot](https://i.ibb.co.com/dwsMr3rw/image.png)
+![Dashboard Screenshot](https://i.ibb.co.com/ccC58cW8/image.png)
 
 ## ✨ Key Features
 
