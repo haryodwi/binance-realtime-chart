@@ -54,7 +54,7 @@ class CandleManager:
                     self.history_candles.append(c)
                     self.history_closes.append(c['close'])
                 
-                # HITUNG SMC ADVANCED
+                # RECALCULATE SMC & DIV FULL
                 self.smc_markers.extend(self._calculate_smc_advanced(list(self.history_candles)))
                 self.div_markers.extend(self._calculate_divergence_bulk(list(self.history_candles)))
 
@@ -87,17 +87,15 @@ class CandleManager:
             rsi.append(100 if pl==0 else 100-(100/(1+(pg/pl))))
         return rsi
 
-    # --- ADVANCED SMC LOGIC (BOS, CHoCH, OB, Strong/Weak) ---
+    # --- ADVANCED SMC LOGIC (FIXED) ---
     def _calculate_smc_advanced(self, candles):
         markers = []
         if len(candles) < 10: return markers
         
-        # State
-        trend = 0 # 1 Bullish, -1 Bearish
-        last_high = None # {price, time, index}
-        last_low = None  # {price, time, index}
+        trend = 0 
+        last_high = None 
+        last_low = None  
         
-        # Helper: Deteksi Fractal (Pivot)
         def is_pivot_high(i):
             return candles[i]['high'] > candles[i-1]['high'] and candles[i]['high'] > candles[i-2]['high'] and \
                    candles[i]['high'] > candles[i+1]['high'] and candles[i]['high'] > candles[i+2]['high']
@@ -105,84 +103,56 @@ class CandleManager:
             return candles[i]['low'] < candles[i-1]['low'] and candles[i]['low'] < candles[i-2]['low'] and \
                    candles[i]['low'] < candles[i+1]['low'] and candles[i]['low'] < candles[i+2]['low']
 
-        # Loop Analisis Struktur
         for i in range(2, len(candles) - 2):
             curr = candles[i]
             
             # 1. Update Swing Points
             if is_pivot_high(i):
-                # Validasi Swing High Baru
-                if last_high is None or curr['high'] > last_high['price']:
-                    # Jika sebelumnya Bullish, ini mungkin Higher High (Strong)
-                    # Jika Bearish, ini mungkin Lower High (Weak High target liquidity)
-                    label = "H" # Default
-                    color = "#ef5350"
-                    
-                    # Logika Breakout (Hanya cek jika trend bullish)
-                    if trend == 1 and last_high and curr['high'] > last_high['price']:
-                         # Ini penerusan trend (BOS sebenarnya terjadi saat close menembus, tapi kita mark pivotnya)
-                         pass
-                    
-                    markers.append({'time': curr['start_time'], 'position': 'aboveBar', 'color': color, 'shape': 'arrowDown', 'text': label})
-                    last_high = {'price': curr['high'], 'time': curr['start_time'], 'index': i}
+                label = "H"; color = "#ef5350"
+                # Logic sederhana: Jika Breakout High sebelumnya -> Strong High candidates
+                markers.append({'time': curr['start_time'], 'position': 'aboveBar', 'color': color, 'shape': 'arrowDown', 'text': label})
+                last_high = {'price': curr['high'], 'time': curr['start_time'], 'index': i}
 
             if is_pivot_low(i):
-                if last_low is None or curr['low'] < last_low['price']:
-                    label = "L"
-                    color = "#26a69a"
-                    markers.append({'time': curr['start_time'], 'position': 'belowBar', 'color': color, 'shape': 'arrowUp', 'text': label})
-                    last_low = {'price': curr['low'], 'time': curr['start_time'], 'index': i}
+                label = "L"; color = "#26a69a"
+                markers.append({'time': curr['start_time'], 'position': 'belowBar', 'color': color, 'shape': 'arrowUp', 'text': label})
+                last_low = {'price': curr['low'], 'time': curr['start_time'], 'index': i}
 
-            # 2. Deteksi Break of Structure (BOS) & CHoCH (Berdasarkan Candle CLOSE)
+            # 2. Break of Structure (BOS) & CHoCH
             # Bullish Break
             if last_high and curr['close'] > last_high['price']:
-                if trend == 1: # Continuation
-                    markers.append({'time': curr['start_time'], 'position': 'aboveBar', 'color': '#00e676', 'shape': 'circle', 'text': 'BOS'})
-                    # Tandai Order Block Bullish (Candle merah terakhir sebelum move ini)
-                    self._find_order_block(candles, i, 'bull', markers)
-                    last_high['price'] = curr['high'] # Update structure
-                elif trend <= 0: # Reversal (Bear to Bull)
-                    markers.append({'time': curr['start_time'], 'position': 'aboveBar', 'color': '#00e676', 'shape': 'circle', 'text': 'CHoCH'})
-                    self._find_order_block(candles, i, 'bull', markers)
-                    trend = 1
-                
-                # Reset High agar tidak spamming BOS di setiap candle yg naik
-                last_high = {'price': curr['high'] * 1.0001, 'time': curr['start_time'], 'index': i} # Fake update biar gak trigger lg
+                txt = 'BOS' if trend == 1 else 'CHoCH'
+                trend = 1
+                markers.append({'time': curr['start_time'], 'position': 'aboveBar', 'color': '#00e676', 'shape': 'circle', 'text': txt})
+                self._find_order_block(candles, i, 'bull', markers)
+                last_high = {'price': curr['high'] * 1.0001, 'time': curr['start_time'], 'index': i} # Reset High
 
             # Bearish Break
             if last_low and curr['close'] < last_low['price']:
-                if trend == -1: # Continuation
-                    markers.append({'time': curr['start_time'], 'position': 'belowBar', 'color': '#ff1744', 'shape': 'circle', 'text': 'BOS'})
-                    self._find_order_block(candles, i, 'bear', markers)
-                    last_low['price'] = curr['low']
-                elif trend >= 0: # Reversal (Bull to Bear)
-                    markers.append({'time': curr['start_time'], 'position': 'belowBar', 'color': '#ff1744', 'shape': 'circle', 'text': 'CHoCH'})
-                    self._find_order_block(candles, i, 'bear', markers)
-                    trend = -1
-                
-                last_low = {'price': curr['low'] * 0.9999, 'time': curr['start_time'], 'index': i}
+                txt = 'BOS' if trend == -1 else 'CHoCH'
+                trend = -1
+                markers.append({'time': curr['start_time'], 'position': 'belowBar', 'color': '#ff1744', 'shape': 'circle', 'text': txt})
+                self._find_order_block(candles, i, 'bear', markers)
+                last_low = {'price': curr['low'] * 0.9999, 'time': curr['start_time'], 'index': i} # Reset Low
 
         return markers
 
     def _find_order_block(self, candles, current_idx, direction, markers):
-        # Cari mundur maksimal 50 candle
-        lookback = 50
+        lookback = 30 # Cari OB dalam 30 candle ke belakang
         start = max(0, current_idx - lookback)
         
         if direction == 'bull':
-            # Cari candle MERAH (Bearish) terakhir sebelum impulsive move
-            # Kita cari candle dengan Close < Open
+            # Bullish OB: Candle Merah terakhir sebelum rally
             for j in range(current_idx, start, -1):
                 c = candles[j]
-                if c['close'] < c['open']: # Candle Merah ketemu
+                if c['close'] < c['open']: 
                     markers.append({'time': c['start_time'], 'position': 'belowBar', 'color': '#2962ff', 'shape': 'square', 'text': 'OB'})
-                    return # Ketemu satu, stop
-        
+                    return 
         elif direction == 'bear':
-            # Cari candle HIJAU (Bullish) terakhir sebelum impulsive move
+            # Bearish OB: Candle Hijau terakhir sebelum dump
             for j in range(current_idx, start, -1):
                 c = candles[j]
-                if c['close'] > c['open']: # Candle Hijau ketemu
+                if c['close'] > c['open']: 
                     markers.append({'time': c['start_time'], 'position': 'aboveBar', 'color': '#2962ff', 'shape': 'square', 'text': 'OB'})
                     return
 
@@ -221,7 +191,6 @@ class CandleManager:
             self.candle['high'] = max(self.candle['high'], price); self.candle['low'] = min(self.candle['low'], price)
             self.candle['close'] = price; self.candle['volume'] += qty
             
-            # Live Indicators
             hist_len = len(self.history_closes); start = max(0, hist_len-500)
             rec = [self.history_closes[i] for i in range(start, hist_len)] + [price]
             rsi = self._calculate_rsi_wilder_full(rec); self.candle['rsi'] = rsi[-1] if rsi else 50
@@ -243,32 +212,50 @@ class CandleManager:
         self.history_closes.append(final['close'])
         self.save_to_disk(final)
         
-        # Trigger SMC update setiap candle close (kita recalculate bulk kecil untuk efisiensi)
-        # Ambil 100 candle terakhir saja untuk update marker terbaru
+        # --- PERBAIKAN LOGIKA EMIT MARKER ---
+        # Ambil 100 candle terakhir untuk analisis
         last_chunk = list(self.history_candles)[-100:]
         new_smc = self._calculate_smc_advanced(last_chunk)
         new_div = self._calculate_divergence_bulk(last_chunk)
 
-        # Filter marker yang HANYA terjadi di candle terakhir ini
-        if new_smc:
-            latest = [m for m in new_smc if m['time'] == final['start_time']]
-            for m in latest:
-                self.smc_markers.append(m)
-                socketio.emit(f'smc_new_{self.interval}s', {'symbol': self.symbol, 'marker': m})
+        # FIX: Cek Duplikat agar marker "masa lalu" (Fractal) tetap terkirim tapi tidak double
+        # Kita ambil hash (waktu + teks) dari 50 marker terakhir di memori
+        existing_sigs = set()
+        for m in list(self.smc_markers)[-50:]: existing_sigs.add((m['time'], m['text']))
         
+        if new_smc:
+            for m in new_smc:
+                sig = (m['time'], m['text'])
+                if sig not in existing_sigs: # Jika marker ini belum pernah disimpan
+                    self.smc_markers.append(m)
+                    socketio.emit(f'smc_new_{self.interval}s', {'symbol': self.symbol, 'marker': m})
+        
+        # Logic Divergence juga sama (Cek duplikat)
+        existing_div_sigs = set()
+        for d in list(self.div_markers)[-50:]: existing_div_sigs.add((d['time'], d['text']))
+
         if new_div:
-            latest = [d for d in new_div if d['time'] == final['start_time']]
-            for d in latest:
-                self.div_markers.append(d)
-                socketio.emit(f'divergence_new_{self.interval}s', {'symbol': self.symbol, 'marker': d})
+            for d in new_div:
+                sig = (d['time'], d['text'])
+                if sig not in existing_div_sigs:
+                    self.div_markers.append(d)
+                    socketio.emit(f'divergence_new_{self.interval}s', {'symbol': self.symbol, 'marker': d})
 
         socketio.emit(f'close_{self.interval}s', final)
         self.last_finalized_time = self.candle['start_time'] + self.interval
 
+# Pastikan ini ada di server.py Anda
 managers = {}
 for s in SYMBOLS:
     u = s.upper()
-    managers[u] = {1: CandleManager(u, 1), 5: CandleManager(u, 5), 15: CandleManager(u, 15), 30: CandleManager(u, 30), 45: CandleManager(u, 45), 60: CandleManager(u, 60)}
+    managers[u] = {
+        1: CandleManager(u, 1), 
+        5: CandleManager(u, 5), 
+        15: CandleManager(u, 15), 
+        30: CandleManager(u, 30), 
+        45: CandleManager(u, 45), 
+        60: CandleManager(u, 60) # 1 Menit
+    }
 
 @socketio.on('request_history')
 def handle_history_request(data):
@@ -295,5 +282,5 @@ def index(): return render_template('index.html')
 
 if __name__ == '__main__':
     t = threading.Thread(target=run_stream); t.daemon = True; t.start()
-    print("=== Server Pro: Advanced SMC Ready ===")
+    print("=== Server Pro: Advanced SMC (Fixed) ===")
     socketio.run(app, debug=True, use_reloader=False)
