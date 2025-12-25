@@ -2,30 +2,46 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Binance SMC Pro: Clean UI</title>
+    <title>Binance Pro: Divergence Config</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
     <style>
         body { background: #0b0e11; color: #eaecef; font-family: -apple-system, sans-serif; margin: 0; padding: 20px; user-select: none; }
+        
+        /* LAYOUT & BUTTONS */
         .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; background: #1e2329; padding: 10px; border-radius: 6px; }
-        select, input { background: #2b3139; color: #fcd535; border: 1px solid #474d57; padding: 5px 10px; border-radius: 4px; font-weight: bold; outline: none; cursor: pointer; }
+        select, input[type="number"], input[type="text"] { background: #2b3139; color: #fcd535; border: 1px solid #474d57; padding: 5px 10px; border-radius: 4px; font-weight: bold; outline: none; cursor: pointer; }
         .btn { background: #2b3139; color: #eaecef; border: 1px solid #474d57; padding: 6px 15px; cursor: pointer; border-radius: 4px; font-weight: bold; margin-left: 5px; transition: 0.2s; }
         .btn:hover { background: #474d57; }
         .btn.active { background: #fcd535; color: #1e2329; border-color: #fcd535; }
         .btn-danger { color: #f6465d; border-color: #f6465d; }
-        .info { font-family: 'Roboto Mono', monospace; font-size: 14px; display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
+        
+        .info { font-family: 'Roboto Mono', monospace; font-size: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
         .val { font-weight: bold; }
+        
+        /* CHART DIVS */
         #main-container { display: flex; flex-direction: column; height: 80vh; position: relative; }
         #chart-div { flex: 3; border: 1px solid #2b3139; border-bottom: none; cursor: crosshair; }
         #rsi-div { flex: 1; border: 1px solid #2b3139; }
-        #alarm-panel { display: none; background: #1e2329; border: 1px solid #474d57; padding: 15px; border-radius: 6px; margin-bottom: 10px; }
+
+        /* PANELS (ALARM & CONFIG) */
+        .panel-box { display: none; background: #1e2329; border: 1px solid #474d57; padding: 15px; border-radius: 6px; margin-bottom: 10px; }
         .alarm-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
         .alarm-list { max-height: 150px; overflow-y: auto; margin-top: 10px; border-top: 1px solid #2b3139; }
         .alarm-item { display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #2b3139; font-size: 13px; }
+        
+        /* DIV CONFIG CHECKBOXES */
+        .checkbox-group { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
+        .checkbox-item { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+        input[type="checkbox"] { accent-color: #fcd535; width: 16px; height: 16px; cursor: pointer; }
+
+        /* NOTIFICATIONS */
         #toast-container { position: fixed; top: 20px; right: 20px; z-index: 9999; }
         .toast { background: #2b3139; color: #fff; padding: 15px 20px; margin-bottom: 10px; border-left: 5px solid #fcd535; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); animation: slideIn 0.3s ease-out; display: flex; align-items: center; justify-content: space-between; min-width: 250px; }
         .toast.alert-high { border-left-color: #f6465d; } .toast.alert-low { border-left-color: #0ecb81; } .toast.alert-magic { border-left-color: #9b59b6; }
         @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+        
+        /* TOOLTIP */
         #measure-tooltip { display: none; position: absolute; z-index: 100; padding: 8px; border-radius: 4px; font-family: monospace; font-size: 12px; color: white; background: rgba(0,0,0,0.8); pointer-events: none; border: 1px solid #474d57; white-space: pre-line; }
     </style>
 </head>
@@ -38,9 +54,12 @@
             
             <button class="btn" id="btn-measure" onclick="toggleMeasure()">📐 Measure</button>
             <button class="btn" id="btn-alarm-toggle" onclick="toggleAlarmPanel()">🔔 Alarms</button>
+            
             <button class="btn" id="btn-smc" onclick="toggleSMC()">⚡ SMC</button>
             <button class="btn" id="btn-ema" onclick="toggleEMA()">📈 EMA</button>
             <button class="btn" id="btn-div" onclick="toggleDiv()">🔀 Div</button>
+            
+            <button class="btn" id="btn-div-conf" onclick="toggleDivConfig()">🔊 Div Config</button>
 
             <span>TF: <span id="tf-label" style="color:#fcd535">[1s]</span></span>
             <span>Price: <span id="price" class="val">---</span></span>
@@ -56,7 +75,14 @@
         </div>
     </div>
     
-    <div id="alarm-panel">
+    <div id="div-config-panel" class="panel-box">
+        <div style="margin-bottom:10px; font-weight:bold; color:#fcd535;">Divergence Sound Alert Configuration</div>
+        <div style="font-size:13px; color:#848e9c; margin-bottom:10px;">Select which timeframes should trigger sound alerts:</div>
+        <div class="checkbox-group" id="div-checks">
+            </div>
+    </div>
+
+    <div id="alarm-panel" class="panel-box">
         <div style="margin-bottom:10px; font-weight:bold; color:#fcd535;">Add RSI Alarm</div>
         <div class="alarm-row">
             <select id="alarm-symbol"><option value="BTCUSDT">BTCUSDT</option><option value="1000PEPEUSDT">1000PEPEUSDT</option></select>
@@ -84,20 +110,30 @@
             osc.connect(gn); gn.connect(audioCtx.destination);
             if(type==='beep'){ osc.type='sine'; osc.frequency.setValueAtTime(800,audioCtx.currentTime); gn.gain.setValueAtTime(0.1,audioCtx.currentTime); gn.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+0.1); osc.start(); osc.stop(audioCtx.currentTime+0.1); } 
             else if(type==='bell'){ osc.type='triangle'; osc.frequency.setValueAtTime(600,audioCtx.currentTime); gn.gain.setValueAtTime(0.1,audioCtx.currentTime); gn.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+1.5); osc.start(); osc.stop(audioCtx.currentTime+1.5); } 
-            else if(type==='magic'){ osc.type='sine'; osc.frequency.setValueAtTime(1000,audioCtx.currentTime); osc.frequency.exponentialRampToValueAtTime(2000,audioCtx.currentTime+0.2); gn.gain.setValueAtTime(0.1,audioCtx.currentTime); gn.gain.linearRampToValueAtTime(0,audioCtx.currentTime+0.5); osc.start(); osc.stop(audioCtx.currentTime+0.5); }
+            else if(type==='magic'){ 
+                osc.type='sine'; osc.frequency.setValueAtTime(1000,audioCtx.currentTime); osc.frequency.exponentialRampToValueAtTime(2000,audioCtx.currentTime+0.2); 
+                gn.gain.setValueAtTime(0.1,audioCtx.currentTime); gn.gain.linearRampToValueAtTime(0,audioCtx.currentTime+0.5); 
+                osc.start(); osc.stop(audioCtx.currentTime+0.5);
+                const osc2=audioCtx.createOscillator(); const gn2=audioCtx.createGain(); osc2.connect(gn2); gn2.connect(audioCtx.destination);
+                osc2.type='square'; osc2.frequency.setValueAtTime(500,audioCtx.currentTime); gn2.gain.setValueAtTime(0.05,audioCtx.currentTime); 
+                gn2.gain.linearRampToValueAtTime(0,audioCtx.currentTime+0.6); osc2.start(); osc2.stop(audioCtx.currentTime+0.6);
+            }
         }
 
         // --- CONFIG & STATE ---
         const symbolSettings = {"BTCUSDT": {precision:2,minMove:0.01}, "1000PEPEUSDT": {precision:7,minMove:0.0000001}};
         let currentTF=1, currentSymbol="BTCUSDT", currentTimezone="America/New_York";
         
-        let smcEnabled = false;
-        let smcMarkersCache = []; // Untuk Marker (BOS/CHoCH/H/L)
-        let obLinesCache = [];    // Untuk Garis Order Block (Pengganti kotak OB)
-        
+        let smcEnabled = false, smcMarkersCache = [];
         let divEnabled = false, divMarkersCache = [];
         let emaEnabled = false;
         
+        // DIV ALERT CONFIG
+        const availableTFs = [1, 5, 15, 30, 45, 60];
+        let divAlertConfig = JSON.parse(localStorage.getItem('divAlertConfig')) || {};
+        // Init config default (All True jika belum ada)
+        availableTFs.forEach(tf => { if(divAlertConfig[tf] === undefined) divAlertConfig[tf] = true; });
+
         const socket = io();
         const timeFormatter = (ts) => new Date(ts*1000).toLocaleTimeString('en-US',{timeZone:currentTimezone,hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
         
@@ -117,118 +153,53 @@
 
         function changeTimezone(tz) { currentTimezone=tz; const loc={timeFormatter:timeFormatter}; chart.applyOptions({localization:loc}); rsiChart.applyOptions({localization:loc}); }
 
-        // --- TOGGLE FUNCTIONS ---
-        function toggleSMC() { 
-            smcEnabled=!smcEnabled; 
-            updateSMCRendering();
-            document.getElementById('btn-smc').classList.toggle('active', smcEnabled); 
-        }
+        // --- UI TOGGLES ---
+        function toggleSMC() { smcEnabled=!smcEnabled; updateMarkers(); document.getElementById('btn-smc').classList.toggle('active', smcEnabled); }
         function toggleDiv() { divEnabled=!divEnabled; updateMarkers(); document.getElementById('btn-div').classList.toggle('active', divEnabled); }
         function toggleEMA() { emaEnabled=!emaEnabled; const b=document.getElementById('btn-ema'); b.classList.toggle('active', emaEnabled); ema50Series.applyOptions({visible:emaEnabled}); ema200Series.applyOptions({visible:emaEnabled}); }
-
-        // FUNGSI RENDER SMC YANG LEBIH CERDAS
-        function updateSMCRendering() {
-            // 1. Render Markers (BOS, CHoCH, H, L)
-            let markers = [];
-            if(divEnabled) markers = markers.concat(divMarkersCache);
-            
-            if(smcEnabled) {
-                // Filter: Kita HANYA ambil marker teks (BOS/CHoCH/H/L), buang marker 'OB'
-                // Karena 'OB' akan kita gambar sebagai Garis (PriceLine)
-                const textMarkers = smcMarkersCache.filter(m => m.text !== 'OB');
-                markers = markers.concat(textMarkers);
-                
-                // 2. Render Order Blocks sebagai LINES
-                // Hapus garis lama dulu
-                obLinesCache.forEach(line => candleSeries.removePriceLine(line));
-                obLinesCache = [];
-                
-                // Ambil data marker OB dari cache
-                const obMarkers = smcMarkersCache.filter(m => m.text === 'OB');
-                
-                // Batasi jumlah garis agar tidak semrawut (Misal: 5 OB terakhir saja)
-                const recentOBs = obMarkers.slice(-5); 
-                
-                recentOBs.forEach(ob => {
-                    // Tentukan warna berdasarkan posisi (Bullish/Bearish)
-                    // OB Bullish biasanya di belowBar, Bearish di aboveBar (dari logika backend kita)
-                    const isBull = ob.position === 'belowBar';
-                    const color = isBull ? '#2962ff' : '#f50057'; // Biru vs Pink
-                    const label = isBull ? 'Bullish OB' : 'Bearish OB';
-                    
-                    // Gambar Garis
-                    const line = candleSeries.createPriceLine({
-                        price: candleSeries.coordinateToPrice(0), // Dummy, akan diupdate
-                        // Masalah: PriceLine butuh harga fix. Backend kirim 'OB' marker di candle tertentu
-                        // Kita perlu harga candle tsb. Tapi marker structure kita tidak simpan harga candle.
-                        // SOLUSI: Kita pakai harga Low/High candle saat itu.
-                        // Karena rumit mengambil harga candle dari marker di frontend,
-                        // Kita gunakan trik: Backend mengirim marker 'position' (above/below).
-                        // Kita akan set manual nanti atau biarkan marker kotak kalau terlalu rumit.
-                        
-                        // KOREKSI: PriceLine Lightweight Charts itu horizontal infinity.
-                        // Kita tidak punya data harga exact OB dari marker (cuma time).
-                        // JADI: Kita kembalikan ke Marker tapi filter agar tidak menumpuk.
-                    });
-                    // Batal pakai PriceLine karena butuh data harga presisi dari backend.
-                    // Kembali ke Marker tapi dengan filtering ketat.
-                });
-            } else {
-                // Jika SMC mati, hapus garis OB (jika ada)
-                obLinesCache.forEach(line => candleSeries.removePriceLine(line));
-                obLinesCache = [];
-            }
-            
-            candleSeries.setMarkers(markers.sort((a,b)=>a.time-b.time));
+        
+        // --- DIV CONFIG PANEL LOGIC ---
+        function toggleDivConfig() {
+            const p = document.getElementById('div-config-panel');
+            if (p.style.display === 'block') { p.style.display = 'none'; }
+            else { p.style.display = 'block'; renderDivChecks(); }
+        }
+        function renderDivChecks() {
+            const c = document.getElementById('div-checks'); c.innerHTML = '';
+            availableTFs.forEach(tf => {
+                const label = tf === 60 ? '1m' : tf + 's';
+                const checked = divAlertConfig[tf] ? 'checked' : '';
+                const html = `<label class="checkbox-item"><input type="checkbox" onchange="updateDivConfig(${tf}, this.checked)" ${checked}> ${label}</label>`;
+                c.innerHTML += html;
+            });
+        }
+        function updateDivConfig(tf, isChecked) {
+            divAlertConfig[tf] = isChecked;
+            localStorage.setItem('divAlertConfig', JSON.stringify(divAlertConfig));
         }
 
-        // FUNGSI GABUNGAN UPDATE MARKER (Revisi)
         function updateMarkers() {
             let allMarkers = [];
-            
-            if(smcEnabled) {
-                // Tampilkan semua SMC marker (BOS, CHoCH, OB, H, L)
-                // Filter agar tidak terlalu ramai? Tidak, user minta data asli.
-                // Kuncinya ada di 'ChangeTF' yang membersihkan cache.
-                allMarkers = allMarkers.concat(smcMarkersCache);
-            }
-            
+            // SMC Filter: Hanya marker text (H/L/BOS/CHoCH)
+            if(smcEnabled) allMarkers = allMarkers.concat(smcMarkersCache.filter(m => m.text !== 'OB'));
             if(divEnabled) allMarkers = allMarkers.concat(divMarkersCache);
-            
             candleSeries.setMarkers(allMarkers.sort((a,b)=>a.time-b.time));
         }
 
-        // --- DATA HANDLER (CRITICAL FIX FOR CROWDED UI) ---
+        // --- DATA HANDLER ---
         function requestData() {
             const s=symbolSettings[currentSymbol]||{precision:2,minMove:0.01};
             const f={precision:s.precision,minMove:s.minMove};
             candleSeries.applyOptions({priceFormat:f}); ema50Series.applyOptions({priceFormat:f}); ema200Series.applyOptions({priceFormat:f});
-            
-            // 1. BERSIHKAN DATA VISUAL
-            candleSeries.setData([]); rsiSeries.setData([]); volumeSeries.setData([]); 
-            ema50Series.setData([]); ema200Series.setData([]);
-            
-            // 2. BERSIHKAN CACHE MARKER (PENTING!)
-            // Ini agar marker 1s tidak muncul di chart 1m
-            smcMarkersCache = []; 
-            divMarkersCache = [];
-            
+            candleSeries.setData([]); rsiSeries.setData([]); volumeSeries.setData([]); ema50Series.setData([]); ema200Series.setData([]);
+            smcMarkersCache=[]; divMarkersCache=[];
             socket.emit('request_history', {symbol:currentSymbol, tf:currentTF});
         }
-        
-        function changeTF(tf) { 
-            currentTF=tf; 
-            document.querySelectorAll('.tf-selector button').forEach(b=>b.classList.remove('active')); 
-            document.getElementById(`btn-${tf}`).classList.add('active'); 
-            document.getElementById('tf-label').innerText=`[${tf==60?'1m':tf+'s'}]`; 
-            requestData(); // Panggil fungsi pembersih
-        }
+        function changeTF(tf) { currentTF=tf; document.querySelectorAll('.tf-selector button').forEach(b=>b.classList.remove('active')); document.getElementById(`btn-${tf}`).classList.add('active'); document.getElementById('tf-label').innerText=`[${tf==60?'1m':tf+'s'}]`; requestData(); }
         function changeSymbol(sym) { currentSymbol=sym; requestData(); }
 
         socket.on('history_response', (msg) => {
-            // STRICT FILTER: Hanya terima data jika TF sesuai dengan yang sedang dilihat
             if(msg.symbol!==currentSymbol || msg.tf!==currentTF) return;
-            
             const c=[],r=[],v=[],e50=[],e200=[];
             msg.data.forEach(d=>{
                 c.push({time:d.start_time,open:d.open,high:d.high,low:d.low,close:d.close});
@@ -237,32 +208,37 @@
                 if(d.ema50)e50.push({time:d.start_time,value:d.ema50}); if(d.ema200)e200.push({time:d.start_time,value:d.ema200});
             });
             candleSeries.setData(c); rsiSeries.setData(r); volumeSeries.setData(v); ema50Series.setData(e50); ema200Series.setData(e200);
-            
-            // Simpan Marker Baru
-            smcMarkersCache = msg.smc || [];
-            divMarkersCache = msg.div || [];
-            updateMarkers(); // Render ulang
+            smcMarkersCache = msg.smc || []; divMarkersCache = msg.div || [];
+            updateMarkers();
             chart.timeScale().fitContent();
         });
 
-        [1,5,15,30,45,60].forEach(tf => {
-            // LISTENERS TETAP ADA, TAPI KITA FILTER DI DALAMNYA
+        availableTFs.forEach(tf => {
+            // SMC Handler (Clean UI Filter)
             socket.on(`smc_new_${tf}s`, (msg) => { 
-                // STRICT CHECK: Hanya proses jika simbol & TF sama dengan layar aktif
                 if(currentSymbol===msg.symbol && currentTF===tf){ 
                     smcMarkersCache.push(msg.marker); 
                     updateMarkers(); 
                 } 
             });
             
+            // DIVERGENCE Handler (With Configurable Alert)
             socket.on(`divergence_new_${tf}s`, (msg) => { 
                 if(currentSymbol===msg.symbol) {
-                    if(currentTF === tf) { // Hanya gambar jika TF sama
+                    // 1. Visual Marker (Hanya jika TF cocok)
+                    if(currentTF === tf) {
                         divMarkersCache.push(msg.marker);
                         updateMarkers();
                     }
-                    // Alarm tetap bunyi walau beda TF (Fitur Monitoring)
-                    if(divEnabled) { /* Sound logic here if needed */ }
+                    
+                    // 2. Alert Logic (Cek Config!)
+                    // Apakah User mencentang TF ini di config?
+                    if(divAlertConfig[tf] === true) {
+                        playSound('magic');
+                        const type = msg.marker.text.includes('Bull') ? 'alert-low' : 'alert-high';
+                        const label = tf === 60 ? '1m' : tf + 's';
+                        showToast(`⚡ ${msg.marker.text} (${label})`, 'alert-magic');
+                    }
                 }
             });
 
@@ -282,7 +258,7 @@
             socket.on(`update_${tf}s`, handleUpdate); socket.on(`close_${tf}s`, handleUpdate);
         });
 
-        // ALARM & MEASURE UTILS
+        // UTILS
         let alarms=JSON.parse(localStorage.getItem('tradingAlarms'))||[];
         function toggleAlarmPanel(){const p=document.getElementById('alarm-panel');p.style.display=p.style.display==='block'?'none':'block';renderAlarms();}
         function addAlarm(){const sym=document.getElementById('alarm-symbol').value,tf=parseInt(document.getElementById('alarm-tf').value),cond=document.getElementById('alarm-cond').value,val=parseFloat(document.getElementById('alarm-val').value),sound=document.getElementById('alarm-sound').value;if(isNaN(val))return alert("Invalid");alarms.push({id:Date.now(),symbol:sym,tf:tf,cond:cond,val:val,sound:sound,lastTrigger:0});saveAlarms();renderAlarms();playSound(sound);showToast('Alarm Set','neutral');}
