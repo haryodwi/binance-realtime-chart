@@ -102,6 +102,16 @@
         // CHART
         const chart = LightweightCharts.createChart(document.getElementById('chart-div'), { layout:{backgroundColor:'#161a1e',textColor:'#848e9c'}, grid:{vertLines:{color:'#2b3139'},horzLines:{color:'#2b3139'}}, timeScale:{timeVisible:true,secondsVisible:true,borderColor:'#2b3139'}, localization:{timeFormatter:timeFormatter}, crosshair:{mode:1}, rightPriceScale:{autoScale:true} });
         const candleSeries = chart.addCandlestickSeries({upColor:'#0ecb81',downColor:'#f6465d',borderVisible:false,wickUpColor:'#0ecb81',wickDownColor:'#f6465d'});
+        // ... di bawah const candleSeries = ...
+        const volumeSeries = chart.addHistogramSeries({
+            color: '#26a69a',
+            priceFormat: { type: 'volume' },
+            priceScaleId: '', // Overlay di chart yang sama
+            scaleMargins: {
+                top: 0.8, // Volume hanya mengisi 20% bagian bawah chart
+                bottom: 0,
+            },
+        });
         const ema50Series = chart.addLineSeries({ color: '#fcd535', lineWidth: 2, visible: false });
         const ema200Series = chart.addLineSeries({ color: '#9b59b6', lineWidth: 2, visible: false });
         const rsiChart = LightweightCharts.createChart(document.getElementById('rsi-div'), { layout:{backgroundColor:'#161a1e',textColor:'#848e9c'}, grid:{vertLines:{color:'#2b3139'},horzLines:{color:'#2b3139'}}, timeScale:{visible:true,timeVisible:true,secondsVisible:true}, localization:{timeFormatter:timeFormatter} });
@@ -156,16 +166,41 @@
 
         socket.on('history_response', (msg) => {
             if(msg.symbol!==currentSymbol || msg.tf!==currentTF) return;
-            const c=[],r=[],e50=[],e200=[];
-            msg.data.forEach(d=>{ c.push({time:d.start_time,open:d.open,high:d.high,low:d.low,close:d.close}); if(d.rsi)r.push({time:d.start_time,value:d.rsi}); if(d.ema50)e50.push({time:d.start_time,value:d.ema50}); if(d.ema200)e200.push({time:d.start_time,value:d.ema200}); });
-            candleSeries.setData(c); rsiSeries.setData(r); ema50Series.setData(e50); ema200Series.setData(e200);
+            
+            // Siapkan array penampung
+            const c=[], r=[], e50=[], e200=[], v=[]; // v untuk volume
+            
+            msg.data.forEach(d=>{ 
+                // Masukkan data Candle
+                c.push({time:d.start_time,open:d.open,high:d.high,low:d.low,close:d.close});
+                
+                // [BARU] Masukkan data Volume (Warna hijau jika Close > Open, Merah jika sebaliknya)
+                const volColor = d.close >= d.open ? '#0ecb81' : '#f6465d';
+                v.push({time:d.start_time, value:d.volume, color: volColor});
+
+                if(d.rsi)r.push({time:d.start_time,value:d.rsi}); 
+                if(d.ema50)e50.push({time:d.start_time,value:d.ema50}); 
+                if(d.ema200)e200.push({time:d.start_time,value:d.ema200}); 
+            });
+            
+            // Set data ke grafik
+            candleSeries.setData(c); 
+            volumeSeries.setData(v); // [BARU] Set data volume
+            rsiSeries.setData(r); 
+            ema50Series.setData(e50); 
+            ema200Series.setData(e200);
+            
             if(msg.active_levels && smcEnabled) msg.active_levels.forEach(l=>addLevelToChart(l));
             if(msg.div) { divMarkersCache=msg.div; updateMarkers(); }
         });
 
+        // --- GANTI DARI SINI ---
         [1,5,15,30,60].forEach(tf => {
+            // SMC Handler
             socket.on(`smc_add_${tf}s`, (msg) => { if(currentSymbol===msg.symbol && currentTF===tf) msg.levels.forEach(l=>addLevelToChart(l)); });
             socket.on(`smc_remove_${tf}s`, (msg) => { if(currentSymbol===msg.symbol && currentTF===tf) msg.ids.forEach(id=>removeLevelFromChart(id)); });
+            
+            // Divergence Alert
             socket.on(`divergence_new_${tf}s`, (msg) => {
                 if(currentSymbol===msg.symbol) {
                     if(currentTF===tf) { divMarkersCache.push(msg.marker); updateMarkers(); }
@@ -175,9 +210,52 @@
                     }
                 }
             });
-            socket.on(`update_${tf}s`, (msg) => { if(currentTF===tf && currentSymbol===msg.symbol){ candleSeries.update({time:msg.start_time,open:msg.open,high:msg.high,low:msg.low,close:msg.close}); if(msg.rsi)rsiSeries.update({time:msg.start_time,value:msg.rsi}); if(msg.ema50)ema50Series.update({time:msg.start_time,value:msg.ema50}); if(msg.ema200)ema200Series.update({time:msg.start_time,value:msg.ema200}); document.getElementById('price').innerText=msg.close; if(msg.rsi)checkAlarms(msg.symbol,tf,msg.rsi); } });
-            socket.on(`close_${tf}s`, (msg) => { if(currentTF===tf && currentSymbol===msg.symbol) candleSeries.update({time:msg.start_time,open:msg.open,high:msg.high,low:msg.low,close:msg.close}); });
+
+            // UPDATE REAL-TIME (CANDLE + RSI + VOLUME)
+            socket.on(`update_${tf}s`, (msg) => { 
+                if(currentTF===tf && currentSymbol===msg.symbol){ 
+                    // 1. Update Candle
+                    candleSeries.update({time:msg.start_time,open:msg.open,high:msg.high,low:msg.low,close:msg.close}); 
+                    
+                    // 2. [BARU] Update Volume Bar
+                    volumeSeries.update({
+                        time: msg.start_time,
+                        value: msg.volume,
+                        color: msg.close >= msg.open ? '#0ecb81' : '#f6465d'
+                    });
+
+                    // 3. Update Text Header Harga
+                    document.getElementById('price').innerText=msg.close; 
+                    
+                    // 4. Update Indikator (RSI & EMA)
+                    if(msg.rsi){
+                        rsiSeries.update({time:msg.start_time,value:msg.rsi});
+                        
+                        // [FIX RSI] Update Text Header RSI
+                        document.getElementById('rsi').innerText = msg.rsi.toFixed(2);
+                        
+                        checkAlarms(msg.symbol,tf,msg.rsi); 
+                    }
+                    if(msg.ema50)ema50Series.update({time:msg.start_time,value:msg.ema50}); 
+                    if(msg.ema200)ema200Series.update({time:msg.start_time,value:msg.ema200}); 
+                } 
+            });
+
+            // CLOSE CANDLE (Finalisasi Volume)
+            socket.on(`close_${tf}s`, (msg) => { 
+                if(currentTF===tf && currentSymbol===msg.symbol) {
+                    candleSeries.update({time:msg.start_time,open:msg.open,high:msg.high,low:msg.low,close:msg.close}); 
+                    
+                    // [BARU] Finalisasi Volume Bar terakhir
+                    volumeSeries.update({
+                        time: msg.start_time,
+                        value: msg.volume,
+                        color: msg.close >= msg.open ? '#0ecb81' : '#f6465d'
+                    });
+                }
+            });
         });
+        // --- SAMPAI SINI ---
 
         // AUDIO & UTILS
         const audioCtx = new (window.AudioContext||window.webkitAudioContext)();
@@ -196,6 +274,21 @@
         chart.subscribeClick(p=>{if(!isM||!p.point)return;const pr=candleSeries.coordinateToPrice(p.point.y);if(!pr)return;if(!mS){mS=pr;mb.innerText="End...";}else{const d=pr-mS,pct=(d/mS)*100,s=symbolSettings[currentSymbol];mt.innerHTML=`${pct.toFixed(2)}%<br>${d.toFixed(s.precision)}`;mt.style.left=(p.point.x+10)+'px';mt.style.top=(p.point.y+10)+'px';mt.style.display='block';isM=false;mS=null;mb.classList.remove('active');mb.innerText="Measure";}});
         renderAlarms(); changeTimezone(currentTimezone); requestData();
         window.addEventListener('resize', () => { chart.resize(document.getElementById('chart-div').clientWidth, document.getElementById('chart-div').clientHeight); rsiChart.resize(document.getElementById('rsi-div').clientWidth, document.getElementById('rsi-div').clientHeight); });
+    
+    // Fitur Crosshair: Update Header saat mouse bergerak
+        chart.subscribeCrosshairMove(param => {
+            const rsiEl = document.getElementById('rsi');
+            if (param.time) {
+                const rsiData = param.seriesData.get(rsiSeries);
+                if (rsiData) {
+                    rsiEl.innerText = rsiData.value.toFixed(2);
+                    rsiEl.style.color = '#fff'; // Putih saat hover
+                }
+            } else {
+                rsiEl.style.color = ''; // Kembali ke warna default saat mouse lepas
+            }
+        });
+    
     </script>
 </body>
 </html>
