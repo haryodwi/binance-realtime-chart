@@ -1,4 +1,4 @@
-import threading, json, websocket, csv, os, time
+import threading, json, websocket, csv, os, time, uuid
 from collections import deque
 from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
@@ -8,7 +8,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'rahasia_trading_pro'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-SYMBOLS = ["btcusdt", "1000pepeusdt"] 
+SYMBOLS = ["btcusdt", "1000pepeusdt", "solusdt", "ethusdt", "cfxusdt", "fartcoinusdt"] 
 DATA_DIR = "data"
 if not os.path.exists(DATA_DIR): os.makedirs(DATA_DIR)
 stream_params = "/".join([f"{s}@aggTrade" for s in SYMBOLS])
@@ -22,8 +22,11 @@ class CandleManager:
         self.filename = os.path.join(DATA_DIR, f"history_{self.symbol}_{interval}s.csv")
         self.history_candles = deque(maxlen=MAX_HISTORY)
         self.history_closes = deque(maxlen=MAX_HISTORY)
-        self.smc_markers = deque(maxlen=MAX_HISTORY)
-        self.div_markers = deque(maxlen=MAX_HISTORY)
+        
+        # STATE:
+        self.active_levels = [] # Dynamic SMC Lines
+        self.div_markers = deque(maxlen=MAX_HISTORY) # Divergence Markers
+        
         self.candle = None
         self.last_finalized_time = 0
         self.load_from_disk()
@@ -46,18 +49,14 @@ class CandleManager:
                 rsi_values = self._calculate_rsi_wilder_full(temp_closes)
                 ema_50 = self._calculate_ema(temp_closes, 50)
                 ema_200 = self._calculate_ema(temp_closes, 200)
-                
+
                 for i, c in enumerate(temp_candles):
-                    c['rsi'] = rsi_values[i]
-                    c['ema50'] = ema_50[i]
-                    c['ema200'] = ema_200[i]
+                    c['rsi'] = rsi_values[i]; c['ema50'] = ema_50[i]; c['ema200'] = ema_200[i]
                     self.history_candles.append(c)
                     self.history_closes.append(c['close'])
                 
-                # RECALCULATE SMC & DIV FULL
-                self.smc_markers.extend(self._calculate_smc_advanced(list(self.history_candles)))
+                # RECALCULATE DIV ONLY (SMC Dynamic starts fresh)
                 self.div_markers.extend(self._calculate_divergence_bulk(list(self.history_candles)))
-
                 print(f"[{self.symbol} {self.interval}s] Loaded {len(self.history_candles)} candles.")
         except Exception as e: print(f"Error loading {self.filename}: {e}")
 
@@ -87,75 +86,7 @@ class CandleManager:
             rsi.append(100 if pl==0 else 100-(100/(1+(pg/pl))))
         return rsi
 
-    # --- ADVANCED SMC LOGIC (FIXED) ---
-    def _calculate_smc_advanced(self, candles):
-        markers = []
-        if len(candles) < 10: return markers
-        
-        trend = 0 
-        last_high = None 
-        last_low = None  
-        
-        def is_pivot_high(i):
-            return candles[i]['high'] > candles[i-1]['high'] and candles[i]['high'] > candles[i-2]['high'] and \
-                   candles[i]['high'] > candles[i+1]['high'] and candles[i]['high'] > candles[i+2]['high']
-        def is_pivot_low(i):
-            return candles[i]['low'] < candles[i-1]['low'] and candles[i]['low'] < candles[i-2]['low'] and \
-                   candles[i]['low'] < candles[i+1]['low'] and candles[i]['low'] < candles[i+2]['low']
-
-        for i in range(2, len(candles) - 2):
-            curr = candles[i]
-            
-            # 1. Update Swing Points
-            if is_pivot_high(i):
-                label = "H"; color = "#ef5350"
-                # Logic sederhana: Jika Breakout High sebelumnya -> Strong High candidates
-                markers.append({'time': curr['start_time'], 'position': 'aboveBar', 'color': color, 'shape': 'arrowDown', 'text': label})
-                last_high = {'price': curr['high'], 'time': curr['start_time'], 'index': i}
-
-            if is_pivot_low(i):
-                label = "L"; color = "#26a69a"
-                markers.append({'time': curr['start_time'], 'position': 'belowBar', 'color': color, 'shape': 'arrowUp', 'text': label})
-                last_low = {'price': curr['low'], 'time': curr['start_time'], 'index': i}
-
-            # 2. Break of Structure (BOS) & CHoCH
-            # Bullish Break
-            if last_high and curr['close'] > last_high['price']:
-                txt = 'BOS' if trend == 1 else 'CHoCH'
-                trend = 1
-                markers.append({'time': curr['start_time'], 'position': 'aboveBar', 'color': '#00e676', 'shape': 'circle', 'text': txt})
-                self._find_order_block(candles, i, 'bull', markers)
-                last_high = {'price': curr['high'] * 1.0001, 'time': curr['start_time'], 'index': i} # Reset High
-
-            # Bearish Break
-            if last_low and curr['close'] < last_low['price']:
-                txt = 'BOS' if trend == -1 else 'CHoCH'
-                trend = -1
-                markers.append({'time': curr['start_time'], 'position': 'belowBar', 'color': '#ff1744', 'shape': 'circle', 'text': txt})
-                self._find_order_block(candles, i, 'bear', markers)
-                last_low = {'price': curr['low'] * 0.9999, 'time': curr['start_time'], 'index': i} # Reset Low
-
-        return markers
-
-    def _find_order_block(self, candles, current_idx, direction, markers):
-        lookback = 30 # Cari OB dalam 30 candle ke belakang
-        start = max(0, current_idx - lookback)
-        
-        if direction == 'bull':
-            # Bullish OB: Candle Merah terakhir sebelum rally
-            for j in range(current_idx, start, -1):
-                c = candles[j]
-                if c['close'] < c['open']: 
-                    markers.append({'time': c['start_time'], 'position': 'belowBar', 'color': '#2962ff', 'shape': 'square', 'text': 'OB'})
-                    return 
-        elif direction == 'bear':
-            # Bearish OB: Candle Hijau terakhir sebelum dump
-            for j in range(current_idx, start, -1):
-                c = candles[j]
-                if c['close'] > c['open']: 
-                    markers.append({'time': c['start_time'], 'position': 'aboveBar', 'color': '#2962ff', 'shape': 'square', 'text': 'OB'})
-                    return
-
+    # --- DIVERGENCE LOGIC (RESTORED) ---
     def _calculate_divergence_bulk(self, candles):
         markers = []
         if len(candles) < 10: return markers
@@ -169,28 +100,84 @@ class CandleManager:
                     curr = pivots_high[-1]; prev = pivots_high[-2]
                     if (curr['idx'] - prev['idx']) < 60:
                         if curr['price'] > prev['price'] and curr['rsi'] < prev['rsi']:
-                            markers.append({'time': curr['time'], 'position': 'aboveBar', 'color': '#ff0000', 'shape': 'circle', 'text': 'rBear', 'sound': 'bear'})
+                            markers.append({'time': curr['time'], 'position': 'aboveBar', 'color': '#ff0000', 'shape': 'circle', 'text': 'rBear'})
                         elif curr['price'] < prev['price'] and curr['rsi'] > prev['rsi']:
-                            markers.append({'time': curr['time'], 'position': 'aboveBar', 'color': '#800000', 'shape': 'circle', 'text': 'hBear', 'sound': 'bear'})
+                            markers.append({'time': curr['time'], 'position': 'aboveBar', 'color': '#800000', 'shape': 'circle', 'text': 'hBear'})
             if c['low']<candles[i-1]['low'] and c['low']<candles[i-2]['low'] and c['low']<candles[i+1]['low'] and c['low']<candles[i+2]['low']:
                 pivots_low.append({'idx': i, 'time': c['start_time'], 'price': c['low'], 'rsi': c['rsi']})
                 if len(pivots_low) >= 2:
                     curr = pivots_low[-1]; prev = pivots_low[-2]
                     if (curr['idx'] - prev['idx']) < 60:
                         if curr['price'] < prev['price'] and curr['rsi'] > prev['rsi']:
-                            markers.append({'time': curr['time'], 'position': 'belowBar', 'color': '#00ff00', 'shape': 'circle', 'text': 'rBull', 'sound': 'bull'})
+                            markers.append({'time': curr['time'], 'position': 'belowBar', 'color': '#00ff00', 'shape': 'circle', 'text': 'rBull'})
                         elif curr['price'] > prev['price'] and curr['rsi'] < prev['rsi']:
-                            markers.append({'time': curr['time'], 'position': 'belowBar', 'color': '#008000', 'shape': 'circle', 'text': 'hBull', 'sound': 'bull'})
+                            markers.append({'time': curr['time'], 'position': 'belowBar', 'color': '#008000', 'shape': 'circle', 'text': 'hBull'})
         return markers
+
+    # --- DYNAMIC SMC ENGINE ---
+    def _analyze_structure(self, candles):
+        if len(candles) < 6: return []
+        curr = candles[-3]; prev1, prev2 = candles[-4], candles[-5]; next1, next2 = candles[-2], candles[-1]
+        new_levels = []
+
+        # SWING HIGH
+        if curr['high'] > prev1['high'] and curr['high'] > prev2['high'] and curr['high'] > next1['high'] and curr['high'] > next2['high']:
+            lvl_id = str(uuid.uuid4())
+            new_levels.append({'id': lvl_id, 'type': 'SWING_HIGH', 'price': curr['high'], 'text': 'High', 'color': '#ef5350', 'style': 2})
+            self.active_levels.append(new_levels[-1])
+
+        # SWING LOW
+        if curr['low'] < prev1['low'] and curr['low'] < prev2['low'] and curr['low'] < next1['low'] and curr['low'] < next2['low']:
+            lvl_id = str(uuid.uuid4())
+            new_levels.append({'id': lvl_id, 'type': 'SWING_LOW', 'price': curr['low'], 'text': 'Low', 'color': '#26a69a', 'style': 2})
+            self.active_levels.append(new_levels[-1])
+            
+        # ORDER BLOCKS
+        body_size = abs(next2['close'] - next2['open'])
+        prev_body_avg = sum([abs(candles[i]['close'] - candles[i]['open']) for i in range(-6, -2)]) / 4
+        if body_size > 2 * prev_body_avg:
+            if next2['close'] > next2['open']: # Bullish Impulsive
+                ob_candle = next1 if next1['close'] < next1['open'] else prev1
+                if ob_candle['close'] < ob_candle['open']:
+                    ob_id = str(uuid.uuid4())
+                    lvl = {'id': ob_id, 'type': 'OB_BULL', 'price': ob_candle['high'], 'bottom': ob_candle['low'], 'text': 'Bull OB +', 'color': '#2962ff', 'style': 1}
+                    new_levels.append(lvl); self.active_levels.append(lvl)
+            elif next2['close'] < next2['open']: # Bearish Impulsive
+                ob_candle = next1 if next1['close'] > next1['open'] else prev1
+                if ob_candle['close'] > ob_candle['open']:
+                    ob_id = str(uuid.uuid4())
+                    lvl = {'id': ob_id, 'type': 'OB_BEAR', 'price': ob_candle['low'], 'top': ob_candle['high'], 'text': 'Bear OB +', 'color': '#f50057', 'style': 1}
+                    new_levels.append(lvl); self.active_levels.append(lvl)
+        return new_levels
+
+    def _check_mitigation(self, current_price):
+        removed_ids = []; active_copy = []
+        for lvl in self.active_levels:
+            is_broken = False
+            if lvl['type'] == 'SWING_HIGH' and current_price > lvl['price']: is_broken = True
+            elif lvl['type'] == 'SWING_LOW' and current_price < lvl['price']: is_broken = True
+            elif lvl['type'] == 'OB_BULL' and current_price < lvl.get('bottom', 0): is_broken = True
+            elif lvl['type'] == 'OB_BEAR' and current_price > lvl.get('top', 999999): is_broken = True
+            
+            if is_broken: removed_ids.append(lvl['id'])
+            else: active_copy.append(lvl)
+        self.active_levels = active_copy
+        return removed_ids
 
     def update(self, price, qty, tick_second):
         if self.candle is None: self._new_candle(tick_second, price, qty); return
+        
+        # Realtime Mitigation
+        removed = self._check_mitigation(price)
+        if removed: socketio.emit(f'smc_remove_{self.interval}s', {'symbol': self.symbol, 'ids': removed})
+
         if tick_second > self.candle['start_time'] and tick_second % self.interval == 0:
             if tick_second > self.last_finalized_time: self._close_candle(); self._new_candle(tick_second, price, qty)
         else:
             self.candle['high'] = max(self.candle['high'], price); self.candle['low'] = min(self.candle['low'], price)
             self.candle['close'] = price; self.candle['volume'] += qty
             
+            # Live Indicators
             hist_len = len(self.history_closes); start = max(0, hist_len-500)
             rec = [self.history_closes[i] for i in range(start, hist_len)] + [price]
             rsi = self._calculate_rsi_wilder_full(rec); self.candle['rsi'] = rsi[-1] if rsi else 50
@@ -212,28 +199,16 @@ class CandleManager:
         self.history_closes.append(final['close'])
         self.save_to_disk(final)
         
-        # --- PERBAIKAN LOGIKA EMIT MARKER ---
-        # Ambil 100 candle terakhir untuk analisis
-        last_chunk = list(self.history_candles)[-100:]
-        new_smc = self._calculate_smc_advanced(last_chunk)
-        new_div = self._calculate_divergence_bulk(last_chunk)
+        # 1. Update SMC Dynamic
+        if len(self.history_candles) >= 6:
+            new_levels = self._analyze_structure(list(self.history_candles))
+            if new_levels: socketio.emit(f'smc_add_{self.interval}s', {'symbol': self.symbol, 'levels': new_levels})
 
-        # FIX: Cek Duplikat agar marker "masa lalu" (Fractal) tetap terkirim tapi tidak double
-        # Kita ambil hash (waktu + teks) dari 50 marker terakhir di memori
-        existing_sigs = set()
-        for m in list(self.smc_markers)[-50:]: existing_sigs.add((m['time'], m['text']))
-        
-        if new_smc:
-            for m in new_smc:
-                sig = (m['time'], m['text'])
-                if sig not in existing_sigs: # Jika marker ini belum pernah disimpan
-                    self.smc_markers.append(m)
-                    socketio.emit(f'smc_new_{self.interval}s', {'symbol': self.symbol, 'marker': m})
-        
-        # Logic Divergence juga sama (Cek duplikat)
+        # 2. Update Divergence
+        last_chunk = list(self.history_candles)[-100:]
+        new_div = self._calculate_divergence_bulk(last_chunk)
         existing_div_sigs = set()
         for d in list(self.div_markers)[-50:]: existing_div_sigs.add((d['time'], d['text']))
-
         if new_div:
             for d in new_div:
                 sig = (d['time'], d['text'])
@@ -244,25 +219,18 @@ class CandleManager:
         socketio.emit(f'close_{self.interval}s', final)
         self.last_finalized_time = self.candle['start_time'] + self.interval
 
-# Pastikan ini ada di server.py Anda
 managers = {}
 for s in SYMBOLS:
     u = s.upper()
-    managers[u] = {
-        1: CandleManager(u, 1), 
-        5: CandleManager(u, 5), 
-        15: CandleManager(u, 15), 
-        30: CandleManager(u, 30), 
-        45: CandleManager(u, 45), 
-        60: CandleManager(u, 60) # 1 Menit
-    }
+    managers[u] = {1: CandleManager(u, 1), 5: CandleManager(u, 5), 15: CandleManager(u, 15), 30: CandleManager(u, 30), 45: CandleManager(u, 45), 60: CandleManager(u, 60)}
 
 @socketio.on('request_history')
 def handle_history_request(data):
     tf = int(data['tf']); sym = data['symbol']
     if sym in managers and tf in managers[sym]:
         mgr = managers[sym][tf]
-        emit('history_response', {'symbol': sym, 'tf': tf, 'data': list(mgr.history_candles), 'smc': list(mgr.smc_markers), 'div': list(mgr.div_markers)})
+        # Kirim SEMUA: Candle, SMC Lines Aktif, dan Div Markers
+        emit('history_response', {'symbol': sym, 'tf': tf, 'data': list(mgr.history_candles), 'active_levels': mgr.active_levels, 'div': list(mgr.div_markers)})
 
 def on_message(ws, message):
     try:
@@ -282,5 +250,5 @@ def index(): return render_template('index.html')
 
 if __name__ == '__main__':
     t = threading.Thread(target=run_stream); t.daemon = True; t.start()
-    print("=== Server Pro: Advanced SMC (Fixed) ===")
+    print("=== Server Pro: ALL FEATURES RESTORED ===")
     socketio.run(app, debug=True, use_reloader=False)
