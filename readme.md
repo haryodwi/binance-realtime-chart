@@ -1,41 +1,46 @@
 # 🚀 Binance Real-Time Pro Chart & Alarm Manager
 
-A powerful, self-hosted technical analysis dashboard built with Python and JavaScript. Unlike standard exchange charts, this tool captures raw tick data to generate **1-second timeframe candlesticks**, complete with a persistent database, professional indicators, and a customizable **Smart Alarm System**.
+A high-performance, self-hosted trading dashboard engineered for **scalpers** and **algorithmic traders**.
+
+Unlike standard charting platforms, this tool captures raw tick data from Binance Futures to generate custom **1-second to 1-minute candlesticks**. It features a persistent flat-file database and a suite of "Institutional Grade" indicators usually reserved for premium subscriptions, including **Smart Money Concepts (SMC)**, **Real-Time Divergence Detection**, and **Dynamic EMAs**.
 
 It is designed for scalpers and algo-traders who need granular data (1s, 5s) and custom alerts that standard platforms often charge for.
 
-![Dashboard Screenshot](https://i.ibb.co.com/ccC58cW8/image.png)
+![Dashboard Screenshot](https://i.ibb.co.com/XrfZxH65/image.png)
 
 ## ✨ Key Features
 
-### 🔔 Smart Alarm Manager (New!)
-* **Custom Triggers:** Set alarms based on RSI conditions (e.g., `RSI < 30` on `15s` timeframe).
-* **Background Monitoring:** Monitors **all configured assets** simultaneously in the background, even if you are viewing a different chart.
-* **Audio & Visual Alerts:** Plays distinctive sounds (Beep/Bell) and shows Toast Notifications when triggered.
-* **Persistent Config:** Alarms are saved in local storage, so they remain active after refreshing the browser.
-* **Anti-Spam:** Intelligent cooldown system to prevent constant ringing.
+### 🧠 Advanced Technical Indicators
+* **⚡ Smart Money Concepts (SMC):**
+    * **Market Structure:** Auto-detects **BOS** (Break of Structure) and **CHoCH** (Change of Character).
+    * **Swing Points:** Identifies Fractal Highs (`H`) and Lows (`L`).
+    * **Order Blocks:** Visualizes potential supply/demand zones (hidden automatically when switching timeframes for a clean UI).
+* **🔀 Divergence Detector (RSI-based):**
+    * **Regular Bullish (`rBull`)**: Trend Reversal (Buy).
+    * **Hidden Bullish (`hBull`)**: Trend Continuation (Buy).
+    * **Regular Bearish (`rBear`)**: Trend Reversal (Sell).
+    * **Hidden Bearish (`hBear`)**: Trend Continuation (Sell).
+* **📈 Dynamic EMA:** Exponential Moving Averages (EMA 50 & EMA 200) adjusted for low-cap asset precision.
 
-### 📊 Professional Charting
-* **Extreme Low Timeframes:** Real-time generation of **1s, 5s, 15s, and 30s** candles.
-* **Multi-Asset Support:** Seamlessly switch between assets (e.g., `BTCUSDT`, `1000PEPEUSDT`).
-* **Technical Indicators:**
-    * **RSI (Wilder's Smoothing):** Mathematically identical to TradingView.
-    * **Volume Histogram:** Color-coded (Up/Down) volume bars overlay.
-* **Interactive Tools:**
-    * **Measure Tool:** Ruler to calculate percentage (%) and price difference between two points.
-    * **Sync:** Crosshair and time scale synchronization across Price and RSI charts.
+### 🔔 Advanced Alert System
+* **🔊 Divergence Config Panel (New!):** Toggle audio alerts for specific timeframes (e.g., mute 1s/5s, unmute 1m).
+* **Custom RSI Alarms:** Set specific triggers (e.g., `RSI < 25`) that monitor the background.
+* **Audio Cues:** Distinct sounds for standard alarms ("Beep/Bell") vs. Divergence detection ("Magic Chime").
+* **Toast Notifications:** Non-intrusive visual pop-ups for every alert.
 
-### 💾 Backend & Architecture
-* **Zero Latency:** Uses Binance Futures WebSocket (AggTrade) for millisecond-precision updates.
-* **Data Persistence:** Automatically records history to CSV files in the `data/` folder.
-* **Dynamic Precision:** Automatically adjusts price decimals for low-value assets (e.g., 7 decimals for PEPE).
+### 📊 Professional Charting Engine
+* **Granular Timeframes:** 1s, 5s, 15s, 30s, **45s**, and **1m**.
+* **Clean UI Architecture:** Smart caching ensures markers from one timeframe do not clutter another.
+* **Multi-Asset Support:** Seamless switching (e.g., `BTCUSDT`, `1000PEPEUSDT`).
+* **Timezone Awareness:** One-click switch between **New York** and **Jakarta** time.
+* **Precision Handling:** Auto-adjusts decimals (e.g., 7 decimals for PEPE) for accurate indicator calculation.
 
 ## 🛠️ Tech Stack
 
 * **Backend:** Python 3.x, Flask, Flask-SocketIO, Websocket-client.
-* **Frontend:** HTML5, CSS3, Socket.IO Client.
+* **Frontend:** HTML5, CSS3, JavaScript (Socket.IO Client).
 * **Charting Library:** [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts).
-* **Data Source:** Binance Futures WebSocket API.
+* **Data Storage:** CSV Flat-file database (Stored in `data/` folder).
 
 ## 🚀 Installation & Setup
 
@@ -71,6 +76,21 @@ Open your web browser and navigate to:
 `http://127.0.0.1:5000`
 
 ## 🎮 Usage Guide
+
+**Indicator Legend**
+
+| Syntax | Description |
+| ----------- | ----------- |
+| Marker | 	Color |	Meaning |
+| BOS	 | 🟢/🔴 | 	Break of Structure: Trend continuation signal. |
+| CHoCH	 | 🟢/🔴 | 	Change of Character: Potential trend reversal signal. |
+| H / L	 | 🔻/🔺 | 	Swing High / Low: Market fractals. |
+| rBull	 | 🟢 Bright | 	Regular Bullish Div: Price Lower Low, RSI Higher Low. |
+| hBull	 | 🟢 Dark	 | Hidden Bullish Div: Price Higher Low, RSI Lower Low. |
+| rBear	 | 🔴 Bright | 	Regular Bearish Div: Price Higher High, RSI Lower High. |
+| hBear	 | 🔴 Dark	 | Hidden Bearish Div: Price Lower High, RSI Higher High. |
+| EMA 50 | 	🟡 Yellow | 	Medium-term trend baseline. |
+| EMA 200 | 	🟣 Purple | 	Long-term trend baseline. |
 
 **Setting an Alarm**
 1. Click the 🔔 Alarms button in the top bar.
